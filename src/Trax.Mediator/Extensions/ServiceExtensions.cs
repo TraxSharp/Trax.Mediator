@@ -2,13 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using Microsoft.Extensions.DependencyInjection;
+using Trax.Core.Exceptions;
 using Trax.Effect.Configuration.TraxEffectBuilder;
 using Trax.Effect.Extensions;
+using Trax.Effect.Services.ServiceTrain;
 using Trax.Mediator.Services.WorkflowBus;
 using Trax.Mediator.Services.WorkflowRegistry;
-using Trax.Effect.Services.ServiceTrain;
-using Trax.Core.Exceptions;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Trax.Mediator.Extensions;
 
@@ -80,24 +80,22 @@ public static class ServiceExtensions
                 .GetTypes()
                 .Where(x => x.IsClass)
                 .Where(x => x.IsAbstract == false)
-                .Where(
-                    x =>
-                        x.GetInterfaces()
-                            .Where(y => y.IsGenericType)
-                            .Select(y => y.GetGenericTypeDefinition())
-                            .Contains(workflowType)
+                .Where(x =>
+                    x.GetInterfaces()
+                        .Where(y => y.IsGenericType)
+                        .Select(y => y.GetGenericTypeDefinition())
+                        .Contains(workflowType)
                 )
-                .Select(
-                    type =>
-                        (
-                            type.GetInterfaces()
-                                .FirstOrDefault(y => !y.IsGenericType && y != typeof(IDisposable))
-                                ?? type.GetInterfaces().FirstOrDefault()
-                                ?? throw new WorkflowException(
-                                    $"Could not find an interface attached to ({type.Name}) with Full Name ({type.FullName}) on Assembly ({type.AssemblyQualifiedName}). At least one Interface is required."
-                                ),
-                            type
-                        )
+                .Select(type =>
+                    (
+                        type.GetInterfaces()
+                            .FirstOrDefault(y => !y.IsGenericType && y != typeof(IDisposable))
+                            ?? type.GetInterfaces().FirstOrDefault()
+                            ?? throw new WorkflowException(
+                                $"Could not find an interface attached to ({type.Name}) with Full Name ({type.FullName}) on Assembly ({type.AssemblyQualifiedName}). At least one Interface is required."
+                            ),
+                        type
+                    )
                 );
 
             types.AddRange(workflowTypes);
