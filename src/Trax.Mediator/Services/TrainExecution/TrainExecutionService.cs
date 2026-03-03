@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Trax.Effect.Configuration.TraxEffectConfiguration;
 using Trax.Effect.Data.Services.IDataContextFactory;
 using Trax.Effect.Models.Metadata;
@@ -6,6 +7,7 @@ using Trax.Effect.Models.Metadata.DTOs;
 using Trax.Effect.Models.WorkQueue;
 using Trax.Effect.Models.WorkQueue.DTOs;
 using Trax.Effect.Utils;
+using Trax.Mediator.Services.TrainAuthorization;
 using Trax.Mediator.Services.TrainBus;
 using Trax.Mediator.Services.TrainDiscovery;
 
@@ -14,7 +16,8 @@ namespace Trax.Mediator.Services.TrainExecution;
 public class TrainExecutionService(
     ITrainDiscoveryService discoveryService,
     ITrainBus trainBus,
-    IDataContextProviderFactory dataContextFactory
+    IDataContextProviderFactory dataContextFactory,
+    IServiceProvider serviceProvider
 ) : ITrainExecutionService
 {
     public async Task<QueueTrainResult> QueueAsync(
@@ -25,6 +28,7 @@ public class TrainExecutionService(
     )
     {
         var registration = FindTrain(trainName);
+        await AuthorizeAsync(registration, ct);
         var input = DeserializeInput(inputJson, registration);
 
         var serializedInput = JsonSerializer.Serialize(
@@ -57,6 +61,7 @@ public class TrainExecutionService(
     )
     {
         var registration = FindTrain(trainName);
+        await AuthorizeAsync(registration, ct);
         var input = DeserializeInput(inputJson, registration);
 
         var metadata = Metadata.Create(
@@ -75,6 +80,13 @@ public class TrainExecutionService(
         await trainBus.RunAsync(input, ct, metadata);
 
         return new RunTrainResult(metadata.Id);
+    }
+
+    private async Task AuthorizeAsync(TrainRegistration registration, CancellationToken ct)
+    {
+        var authService = serviceProvider.GetService<ITrainAuthorizationService>();
+        if (authService is not null)
+            await authService.AuthorizeAsync(registration, ct);
     }
 
     private TrainRegistration FindTrain(string trainName)
