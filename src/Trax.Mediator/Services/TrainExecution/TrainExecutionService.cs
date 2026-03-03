@@ -91,9 +91,12 @@ public class TrainExecutionService(
 
     private TrainRegistration FindTrain(string trainName)
     {
-        var registration = discoveryService
-            .DiscoverTrains()
-            .FirstOrDefault(t => t.ServiceType.FullName == trainName);
+        var trains = discoveryService.DiscoverTrains();
+
+        // Exact match on fully qualified name first, then fall back to short name
+        var registration =
+            trains.FirstOrDefault(t => t.ServiceTypeName == trainName)
+            ?? trains.FirstOrDefault(t => t.ServiceType.Name == trainName);
 
         if (registration is null)
             throw new InvalidOperationException(
