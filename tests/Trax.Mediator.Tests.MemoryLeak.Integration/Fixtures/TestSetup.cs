@@ -7,7 +7,7 @@ using Trax.Effect.Provider.Parameter.Extensions;
 using Trax.Mediator.Extensions;
 using Trax.Mediator.Services.TrainBus;
 
-namespace Trax.Mediator.Tests.MemoryLeak.Integration;
+namespace Trax.Mediator.Tests.MemoryLeak.Integration.Fixtures;
 
 /// <summary>
 /// Test setup for memory leak integration tests.
