@@ -17,7 +17,8 @@ public class MediatorServiceExtensionsTests
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddTrax(trax =>
-            trax.AddEffects(_ => { }).AddMediator(assemblies: [typeof(AssemblyMarker).Assembly])
+            trax.AddEffects(effects => effects)
+                .AddMediator(assemblies: [typeof(AssemblyMarker).Assembly])
         );
         using var provider = services.BuildServiceProvider();
 
@@ -35,7 +36,8 @@ public class MediatorServiceExtensionsTests
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddTrax(trax =>
-            trax.AddEffects(_ => { }).AddMediator(assemblies: [typeof(AssemblyMarker).Assembly])
+            trax.AddEffects(effects => effects)
+                .AddMediator(assemblies: [typeof(AssemblyMarker).Assembly])
         );
         using var provider = services.BuildServiceProvider();
 
