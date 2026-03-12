@@ -58,16 +58,25 @@ public class TrainRegistry : ITrainRegistry
     /// IServiceTrain&lt;TIn, TOut&gt; interface, a TrainException is thrown
     /// with detailed information about the invalid implementation.
     /// </remarks>
+    /// <summary>
+    /// The discovered (serviceType, implementationType) pairs from assembly scanning.
+    /// Reused by <c>RegisterServiceTrains</c> to avoid a second assembly scan.
+    /// </summary>
+    internal IReadOnlyList<(Type ServiceType, Type ImplementationType)> DiscoveredTrains { get; }
+
     public TrainRegistry(params Assembly[] assemblies)
     {
         // The type we will be looking for in our assemblies
         var trainType = typeof(IServiceTrain<,>);
 
-        var allTrainTypes = new HashSet<Type>();
+        // Single scan: capture both the service type (interface) and the concrete type.
+        // A HashSet keyed by concrete type prevents duplicates when the same assembly is passed twice.
+        var seen = new HashSet<Type>();
+        var discovered = new List<(Type ServiceType, Type ImplementationType)>();
 
         foreach (var assembly in assemblies)
         {
-            var trainTypes = assembly
+            var concreteTypes = assembly
                 .GetTypes()
                 .Where(x => x.IsClass)
                 .Where(x => x.IsAbstract == false)
@@ -76,25 +85,35 @@ public class TrainRegistry : ITrainRegistry
                         .Where(y => y.IsGenericType)
                         .Select(y => y.GetGenericTypeDefinition())
                         .Contains(trainType)
-                )
-                .Select(x =>
-                    // Prefer to inject via interface, but if it doesn't exist then inject by underlying type
-                    x.GetInterfaces()
-                        .FirstOrDefault(y => !y.IsGenericType && y != typeof(IDisposable))
-                    ?? x
                 );
 
-            allTrainTypes.UnionWith(trainTypes);
+            foreach (var concreteType in concreteTypes)
+            {
+                if (!seen.Add(concreteType))
+                    continue;
+
+                // Prefer to register via interface, but if none exists fall back to concrete
+                var serviceType =
+                    concreteType
+                        .GetInterfaces()
+                        .FirstOrDefault(y => !y.IsGenericType && y != typeof(IDisposable))
+                    ?? concreteType;
+
+                discovered.Add((serviceType, concreteType));
+            }
         }
+
+        DiscoveredTrains = discovered;
 
         // Build the input type → train mapping, skipping duplicates.
         // Multiple trains can share the same input type (e.g., internal scheduler
         // trains using Unit). These are resolved directly from DI rather than the bus.
         InputTypeToTrain = new Dictionary<Type, Type>();
-        foreach (var wf in allTrainTypes)
+        foreach (var (serviceType, _) in discovered)
         {
             var inputType =
-                wf.GetInterfaces()
+                serviceType
+                    .GetInterfaces()
                     .Where(interfaceType => interfaceType.IsGenericType)
                     .FirstOrDefault(interfaceType =>
                         interfaceType.GetGenericTypeDefinition() == trainType
@@ -102,10 +121,10 @@ public class TrainRegistry : ITrainRegistry
                     ?.GetGenericArguments()
                     .FirstOrDefault()
                 ?? throw new TrainException(
-                    $"Could not find an interface and/or an inherited interface of type ({trainType.Name}) on target type ({wf.Name}) with FullName ({wf.FullName}) on Assembly ({wf.AssemblyQualifiedName})."
+                    $"Could not find an interface and/or an inherited interface of type ({trainType.Name}) on target type ({serviceType.Name}) with FullName ({serviceType.FullName}) on Assembly ({serviceType.AssemblyQualifiedName})."
                 );
 
-            InputTypeToTrain.TryAdd(inputType, wf);
+            InputTypeToTrain.TryAdd(inputType, serviceType);
         }
     }
 }

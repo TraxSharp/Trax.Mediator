@@ -1,10 +1,12 @@
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Trax.Effect.Extensions;
+using Trax.Effect.Services.ServiceTrain;
 using Trax.Mediator.Configuration;
 using Trax.Mediator.Extensions;
 using Trax.Mediator.Services.TrainBus;
 using Trax.Mediator.Services.TrainRegistry;
+using Trax.Mediator.Tests.MemoryLeak.Integration.Fakes.Trains;
 
 namespace Trax.Mediator.Tests.MemoryLeak.Integration.UnitTests;
 
@@ -159,6 +161,85 @@ public class MediatorServiceExtensionsTests
             .WithMessage("*.AddEffects*")
             .WithMessage("*.AddMediator*")
             .WithMessage("*.ScanAssemblies(typeof(Program).Assembly)*");
+    }
+
+    #endregion
+
+    #region Deduplication (pre-scanned registration)
+
+    [Test]
+    public void AddServiceTrainBus_WithPreScannedTypes_RegistersAllTrains()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddTrax(trax =>
+            trax.AddEffects(effects => effects)
+                .AddMediator(assemblies: [typeof(AssemblyMarker).Assembly])
+        );
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        scope.ServiceProvider.GetService<IMemoryTestTrain>().Should().NotBeNull();
+        scope.ServiceProvider.GetService<IFailingTestTrain>().Should().NotBeNull();
+        scope.ServiceProvider.GetService<INestedTestTrain>().Should().NotBeNull();
+    }
+
+    [Test]
+    public void AddServiceTrainBus_WithPreScannedTypes_SetsCanonicalName()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddTrax(trax =>
+            trax.AddEffects(effects => effects)
+                .AddMediator(assemblies: [typeof(AssemblyMarker).Assembly])
+        );
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var train = scope.ServiceProvider.GetRequiredService<IMemoryTestTrain>();
+        var serviceTrain =
+            train as ServiceTrain<Fakes.Models.MemoryTestInput, Fakes.Models.MemoryTestOutput>;
+        serviceTrain.Should().NotBeNull();
+        serviceTrain!.CanonicalName.Should().Be(typeof(IMemoryTestTrain).FullName);
+    }
+
+    [Test]
+    public void AddServiceTrainBus_WithPreScannedTypes_TrainRegistryConsistent()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddTrax(trax =>
+            trax.AddEffects(effects => effects)
+                .AddMediator(assemblies: [typeof(AssemblyMarker).Assembly])
+        );
+        using var provider = services.BuildServiceProvider();
+
+        var registry = provider.GetRequiredService<ITrainRegistry>();
+        // InputTypeToTrain should contain entries for our test trains
+        registry.InputTypeToTrain.Should().NotBeEmpty();
+        registry.InputTypeToTrain.Values.Should().Contain(typeof(IMemoryTestTrain));
+    }
+
+    [Test]
+    public void AddServiceTrainBus_WithScopedLifetime_RegistersAllTrainsAsScoped()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddTrax(trax =>
+            trax.AddEffects(effects => effects)
+                .AddMediator(mediator =>
+                    mediator
+                        .ScanAssemblies(typeof(AssemblyMarker).Assembly)
+                        .TrainLifetime(ServiceLifetime.Scoped)
+                )
+        );
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        // All trains should be resolvable from a scope
+        scope.ServiceProvider.GetService<IMemoryTestTrain>().Should().NotBeNull();
+        scope.ServiceProvider.GetService<IFailingTestTrain>().Should().NotBeNull();
+        scope.ServiceProvider.GetService<INestedTestTrain>().Should().NotBeNull();
     }
 
     #endregion
