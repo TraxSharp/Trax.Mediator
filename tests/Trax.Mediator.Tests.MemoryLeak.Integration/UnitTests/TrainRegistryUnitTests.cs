@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Trax.Effect.Services.ServiceTrain;
 using Trax.Mediator.Services.TrainRegistry;
 using Trax.Mediator.Tests.MemoryLeak.Integration.Fakes.Trains;
 
@@ -166,6 +167,65 @@ public class TrainRegistryUnitTests
         // Each concrete type should appear exactly once
         var concreteTypes = registry.DiscoveredTrains.Select(t => t.ImplementationType).ToList();
         concreteTypes.Should().OnlyHaveUniqueItems();
+    }
+
+    #endregion
+
+    #region Trains Without Dedicated Interface
+
+    [Test]
+    public void DiscoveredTrains_ContainsInterfacelessTrain()
+    {
+        var registry = new TrainRegistry(typeof(AssemblyMarker).Assembly);
+
+        registry
+            .DiscoveredTrains.Should()
+            .Contain(t => t.ImplementationType == typeof(InterfacelessTestTrain));
+    }
+
+    [Test]
+    public void DiscoveredTrains_InterfacelessTrain_ServiceTypeIsGenericInterface()
+    {
+        var registry = new TrainRegistry(typeof(AssemblyMarker).Assembly);
+
+        var entry = registry.DiscoveredTrains.First(t =>
+            t.ImplementationType == typeof(InterfacelessTestTrain)
+        );
+
+        // Service type should be the closed generic IServiceTrain<TIn, TOut>,
+        // NOT the concrete class
+        entry
+            .ServiceType.Should()
+            .Be(typeof(IServiceTrain<InterfacelessTestInput, InterfacelessTestOutput>));
+        entry.ServiceType.IsInterface.Should().BeTrue();
+        entry.ServiceType.IsClass.Should().BeFalse();
+    }
+
+    [Test]
+    public void InputTypeToTrain_InterfacelessTrain_MapsInputTypeCorrectly()
+    {
+        var registry = new TrainRegistry(typeof(AssemblyMarker).Assembly);
+
+        registry.InputTypeToTrain.Should().ContainKey(typeof(InterfacelessTestInput));
+
+        registry
+            .InputTypeToTrain[typeof(InterfacelessTestInput)]
+            .Should()
+            .Be(typeof(IServiceTrain<InterfacelessTestInput, InterfacelessTestOutput>));
+    }
+
+    [Test]
+    public void DiscoveredTrains_InterfacelessTrain_MatchesInputTypeToTrain()
+    {
+        var registry = new TrainRegistry(typeof(AssemblyMarker).Assembly);
+
+        var entry = registry.DiscoveredTrains.First(t =>
+            t.ImplementationType == typeof(InterfacelessTestTrain)
+        );
+
+        // The service type from DiscoveredTrains should be the same value
+        // stored in InputTypeToTrain for this train's input type
+        registry.InputTypeToTrain[typeof(InterfacelessTestInput)].Should().Be(entry.ServiceType);
     }
 
     #endregion
