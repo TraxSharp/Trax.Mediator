@@ -92,12 +92,22 @@ public class TrainRegistry : ITrainRegistry
                 if (!seen.Add(concreteType))
                     continue;
 
-                // Prefer to register via interface, but if none exists fall back to concrete
+                // Prefer a non-generic interface (e.g., IMyTrain). If none exists, fall back
+                // to the closed IServiceTrain<TIn, TOut> generic — this matches the original
+                // RegisterServiceTrains behavior and avoids DI disposal issues when the
+                // service type is the concrete class itself.
                 var serviceType =
                     concreteType
                         .GetInterfaces()
                         .FirstOrDefault(y => !y.IsGenericType && y != typeof(IDisposable))
-                    ?? concreteType;
+                    ?? concreteType
+                        .GetInterfaces()
+                        .FirstOrDefault(y =>
+                            y.IsGenericType && y.GetGenericTypeDefinition() == trainType
+                        )
+                    ?? throw new TrainException(
+                        $"Could not find an interface attached to ({concreteType.Name}) with Full Name ({concreteType.FullName}) on Assembly ({concreteType.AssemblyQualifiedName}). At least one Interface is required."
+                    );
 
                 discovered.Add((serviceType, concreteType));
             }
@@ -109,10 +119,14 @@ public class TrainRegistry : ITrainRegistry
         // Multiple trains can share the same input type (e.g., internal scheduler
         // trains using Unit). These are resolved directly from DI rather than the bus.
         InputTypeToTrain = new Dictionary<Type, Type>();
-        foreach (var (serviceType, _) in discovered)
+        foreach (var (serviceType, implementationType) in discovered)
         {
+            // Use the concrete type to find IServiceTrain<TIn, TOut> — the service type
+            // may be a non-generic interface (IMyTrain) whose GetInterfaces() includes
+            // IServiceTrain<,>, or it may itself be IServiceTrain<,> when no dedicated
+            // interface exists. The concrete type always has it.
             var inputType =
-                serviceType
+                implementationType
                     .GetInterfaces()
                     .Where(interfaceType => interfaceType.IsGenericType)
                     .FirstOrDefault(interfaceType =>
@@ -121,7 +135,7 @@ public class TrainRegistry : ITrainRegistry
                     ?.GetGenericArguments()
                     .FirstOrDefault()
                 ?? throw new TrainException(
-                    $"Could not find an interface and/or an inherited interface of type ({trainType.Name}) on target type ({serviceType.Name}) with FullName ({serviceType.FullName}) on Assembly ({serviceType.AssemblyQualifiedName})."
+                    $"Could not find an interface and/or an inherited interface of type ({trainType.Name}) on target type ({implementationType.Name}) with FullName ({implementationType.FullName}) on Assembly ({implementationType.AssemblyQualifiedName})."
                 );
 
             InputTypeToTrain.TryAdd(inputType, serviceType);
