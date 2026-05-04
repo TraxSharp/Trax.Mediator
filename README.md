@@ -2,6 +2,7 @@
 
 [![NuGet Version](https://img.shields.io/nuget/v/Trax.Mediator)](https://www.nuget.org/packages/Trax.Mediator/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Coverage](https://img.shields.io/badge/coverage-91.8%25-brightgreen?logo=codecov&logoColor=white)](#)
 
 Dispatch station for [Trax](https://www.nuget.org/packages/Trax.Effect/) trains. Hand it the cargo and it routes it to the right train, no need to know which train handles what.
 
