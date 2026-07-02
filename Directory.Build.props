@@ -2,4 +2,10 @@
   <PropertyGroup>
     <Version>1.99.99</Version>
   </PropertyGroup>
+
+  <!-- Deterministic/reproducible builds. CI source-path normalization
+       (ContinuousIntegrationBuild) is turned on by the package only when CI is detected. -->
+  <ItemGroup>
+    <PackageReference Include="DotNet.ReproducibleBuilds" PrivateAssets="All" />
+  </ItemGroup>
 </Project>
