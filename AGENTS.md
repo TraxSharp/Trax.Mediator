@@ -18,7 +18,7 @@ if your work contradicts one, say so rather than silently overriding it.
 | `[TraxAuthorize]`, or anything in `TrainAuthorization/` | [0001](./docs/adr/0001-authorization-is-fail-closed.md), the default is fail-closed and the opt-out is a named call |
 
 Decisions binding more than one repo live in the central corpus at `Trax.Docs/adr/`, whose
-index lists them by repo. Eight name `mediator`. The one most likely to reach a change here
+index lists them by repo. Nine name `mediator`. The one most likely to reach a change here
 is `0007`, the canonical train name being the interface FullName, which
 `InterfaceFullNameInvariantTests` in this repo enforces at the point of registration. In a
 workspace checkout the index is at `../Trax.Docs/adr/README.md`; that path does not resolve
