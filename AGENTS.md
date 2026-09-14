@@ -2,7 +2,7 @@
 
 Decoupled dispatch: the train bus routes by input type instead of direct injection, plus
 train discovery, the registry, and train-level authorization. It sits above `Trax.Effect`
-and below `Trax.Scheduler`, `Trax.Api` and `Trax.Dashboard`.
+and below `Trax.Scheduler`, `Trax.Api`, `Trax.Dashboard` and `Trax.Samples`.
 
 This file is the entry point. It routes; it does not restate the rules.
 
@@ -57,12 +57,26 @@ that reads as a deferral is not.
 
 ## Running the tests
 
-This repo ships no compose file. The Postgres integration suite reads a
-`DatabaseConnectionString` and CI provides the database as a workflow service
-(`postgres:17`, user `trax`, database `trax_data_tests`). Locally, point it at any Postgres
-you already have, or bring one up from a sibling repo's compose file.
+`dotnet test` at the root resolves `Trax.Mediator.slnx`, which includes the Postgres
+integration suite, so the root command needs a database. That suite has no skip guard: its
+fixture reads `tests/Trax.Mediator.Tests.Postgres.Integration/appsettings.json` with
+`optional: false` and connects in `[OneTimeSetUp]`, so with nothing listening all six of its
+fixtures error rather than skip. Everything else runs without one: the convention guards, the
+memory-leak suite, which uses an in-memory data context, and the `Trax.Mediator.Testing`
+guard tests, which are pure reflection.
 
 ```bash
-dotnet test                                   # everything that needs no database
+dotnet test                                   # the whole solution, Postgres included
 dotnet test tests/Trax.Mediator.Tests.Meta    # the convention guards alone
+
+# Everything that needs no database, in one command:
+dotnet test --filter 'FullyQualifiedName!~Trax.Mediator.Tests.Postgres.Integration'
 ```
+
+This repo ships no compose file and CI provides the database as a workflow service
+(`postgres:17`, user `trax`, database `trax_data_tests`). Locally, bring one up from a
+sibling repo: `docker compose -f ../Trax.Effect/docker-compose.yml up -d` matches the
+committed connection string exactly, because its `init-databases.sh` creates
+`trax_data_tests` alongside `trax` on the container's first start. Trax.Scheduler's compose
+file is the same and Trax.Samples' is a superset of it. Any other Postgres works too, as long
+as a `trax_data_tests` database exists: the suite creates its schema, not its database.

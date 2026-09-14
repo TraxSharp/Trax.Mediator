@@ -19,12 +19,15 @@ Numbering is per directory, so `0001` exists in several repos. Cite one of these
 ## How they are checked
 
 The `adr-guard` job in `.github/workflows/pull_request.yml` runs the guard published by
-Trax.Docs against this directory on every pull request. It needs no other repo present.
-To run it locally from a workspace checkout:
+Trax.Docs against this directory on every pull request. The job needs no other repo present.
+Running the same check locally does: it builds the guard from a workspace checkout of
+Trax.Docs. Pass `--census-root` as well, or the census is never added to the run at all.
 
 ```bash
 dotnet run --project ../Trax.Docs/tools/Trax.Adr.Guard -- \
-  --repo . --known-areas auth,platform,testing
+  --repo . \
+  --known-areas auth,platform,testing \
+  --census-root tests/Trax.Mediator.Tests.Meta
 ```
 
 The format is `.claude/skills/recording-decisions/ADR-FORMAT.md`.
