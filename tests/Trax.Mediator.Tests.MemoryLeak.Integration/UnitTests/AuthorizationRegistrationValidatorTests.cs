@@ -19,6 +19,7 @@ namespace Trax.Mediator.Tests.MemoryLeak.Integration.UnitTests;
 ///
 /// <para>Enforces <c>docs/adr/0001-authorization-is-fail-closed.md</c>.</para>
 /// </summary>
+[Property("adr", "docs/adr/0001-authorization-is-fail-closed.md")]
 [TestFixture]
 public class AuthorizationRegistrationValidatorTests
 {
