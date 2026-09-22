@@ -406,41 +406,35 @@ public class TupleTrain : Train<SimpleInput, (string Result, int Count, DateTime
     > Junctions() => Chain<TupleJunction>().Resolve();
 }
 
-// Testable train that exposes Memory dictionary for testing
+/// <summary>
+/// Reaches the monad a run left behind, so the Memory tests can assert on what a chain
+/// accumulated and on clearing it.
+/// </summary>
+/// <remarks>
+/// The monad is framework state rather than anything a train declares, so it is read by
+/// reflection off the base class rather than by having the train hand it out. That keeps this
+/// train an ordinary chain declaration: the subject here is Monad.Memory, not the train.
+/// </remarks>
 public class TestableTrain : Train<SimpleInput, SimpleOutput>
 {
-    private Monad.Monad<SimpleInput, SimpleOutput>? _monad;
+    protected override Task<Either<Exception, SimpleOutput>> Junctions() =>
+        Chain<ProcessJunction>().Resolve();
 
-    protected override async Task<Either<Exception, SimpleOutput>> RunInternal(SimpleInput input)
-    {
-        _monad = Activate(input);
-        return await _monad.Chain<ProcessJunction>().Resolve();
-    }
+    public int GetMemoryCount() => Memory()?.Count ?? 0;
 
-    public int GetMemoryCount()
-    {
-        if (_monad is null)
-            return 0;
-        var memoryProp = _monad
-            .GetType()
-            .GetProperty(
-                "Memory",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic
-            );
-        return memoryProp?.GetValue(_monad) is Dictionary<Type, object> dict ? dict.Count : 0;
-    }
+    public void ClearMemory() => Memory()?.Clear();
 
-    public void ClearMemory()
+    private Dictionary<Type, object>? Memory()
     {
-        if (_monad is null)
-            return;
-        var memoryProp = _monad
-            .GetType()
-            .GetProperty(
-                "Memory",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic
-            );
-        (memoryProp?.GetValue(_monad) as Dictionary<Type, object>)?.Clear();
+        const System.Reflection.BindingFlags flags =
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+
+        var monad = typeof(Train<SimpleInput, SimpleOutput>)
+            .GetField("_monad", flags)
+            ?.GetValue(this);
+
+        return monad?.GetType().GetProperty("Memory", flags)?.GetValue(monad)
+            as Dictionary<Type, object>;
     }
 }
 
