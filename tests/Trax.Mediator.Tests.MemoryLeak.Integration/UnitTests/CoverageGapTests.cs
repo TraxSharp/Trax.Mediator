@@ -2,6 +2,7 @@ using System.Text.Json;
 using FluentAssertions;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
+using Trax.Core.Junction;
 using Trax.Effect.Attributes;
 using Trax.Effect.Configuration.TraxEffectConfiguration;
 using Trax.Effect.Data.InMemory.Extensions;
@@ -250,8 +251,8 @@ public class CoverageGapTests
 
     public class GapTrain : ServiceTrain<GapInput, GapOutput>, IGapTrain
     {
-        protected override Task<Either<Exception, GapOutput>> RunInternal(GapInput input) =>
-            Task.FromResult<Either<Exception, GapOutput>>(new GapOutput { Echo = input.Value });
+        protected override Task<Either<Exception, GapOutput>> Junctions() =>
+            Chain<EchoGap>().Resolve();
     }
 
     public record AuthGapInput
@@ -264,8 +265,8 @@ public class CoverageGapTests
 
     public class AuthorizedGapTrain : ServiceTrain<AuthGapInput, GapOutput>, IAuthorizedGapTrain
     {
-        protected override Task<Either<Exception, GapOutput>> RunInternal(AuthGapInput input) =>
-            Task.FromResult<Either<Exception, GapOutput>>(new GapOutput { Echo = input.Value });
+        protected override Task<Either<Exception, GapOutput>> Junctions() =>
+            Chain<EchoAuthGap>().Resolve();
     }
 
     public record QueryGapInput
@@ -278,8 +279,8 @@ public class CoverageGapTests
     [TraxQuery(Name = "customQueryName")]
     public class QueryGapTrain : ServiceTrain<QueryGapInput, GapOutput>, IQueryGapTrain
     {
-        protected override Task<Either<Exception, GapOutput>> RunInternal(QueryGapInput input) =>
-            Task.FromResult<Either<Exception, GapOutput>>(new GapOutput { Echo = input.Value });
+        protected override Task<Either<Exception, GapOutput>> Junctions() =>
+            Chain<EchoQueryGap>().Resolve();
     }
 
     public record MutationGapInput
@@ -292,8 +293,32 @@ public class CoverageGapTests
     [TraxMutation]
     public class MutationGapTrain : ServiceTrain<MutationGapInput, GapOutput>, IMutationGapTrain
     {
-        protected override Task<Either<Exception, GapOutput>> RunInternal(MutationGapInput input) =>
-            Task.FromResult<Either<Exception, GapOutput>>(new GapOutput { Echo = input.Value });
+        protected override Task<Either<Exception, GapOutput>> Junctions() =>
+            Chain<EchoMutationGap>().Resolve();
+    }
+
+    private sealed class EchoGap : Junction<GapInput, GapOutput>
+    {
+        public override Task<GapOutput> Run(GapInput input) =>
+            Task.FromResult(new GapOutput { Echo = input.Value });
+    }
+
+    private sealed class EchoAuthGap : Junction<AuthGapInput, GapOutput>
+    {
+        public override Task<GapOutput> Run(AuthGapInput input) =>
+            Task.FromResult(new GapOutput { Echo = input.Value });
+    }
+
+    private sealed class EchoQueryGap : Junction<QueryGapInput, GapOutput>
+    {
+        public override Task<GapOutput> Run(QueryGapInput input) =>
+            Task.FromResult(new GapOutput { Echo = input.Value });
+    }
+
+    private sealed class EchoMutationGap : Junction<MutationGapInput, GapOutput>
+    {
+        public override Task<GapOutput> Run(MutationGapInput input) =>
+            Task.FromResult(new GapOutput { Echo = input.Value });
     }
 
     #endregion
