@@ -126,7 +126,7 @@ public class CancellationContractTests : TestSetup
     /// <summary>A train that hands the caller's token to its downstream call.</summary>
     internal class CooperativeTrain : ServiceTrain<CooperativeInput, Unit>, ICooperativeTrain
     {
-        protected override async Task<Either<Exception, Unit>> RunInternal(CooperativeInput input)
+        protected override async Task<Either<Exception, Unit>> Junctions()
         {
             var parked = new TaskCompletionSource(
                 TaskCreationOptions.RunContinuationsAsynchronously
@@ -139,20 +139,20 @@ public class CancellationContractTests : TestSetup
             await parked.Task;
 
             CancelProbe.RanToCompletion = true;
-            return Activate(input, Unit.Default).Resolve();
+            return Resolve();
         }
     }
 
     /// <summary>A train whose downstream call takes no token, as an un-cancellable SDK would.</summary>
     internal class IndifferentTrain : ServiceTrain<IndifferentInput, Unit>, IIndifferentTrain
     {
-        protected override async Task<Either<Exception, Unit>> RunInternal(IndifferentInput input)
+        protected override async Task<Either<Exception, Unit>> Junctions()
         {
             CancelProbe.Started.TrySetResult();
             await CancelProbe.Downstream.Task;
 
             CancelProbe.RanToCompletion = true;
-            return Activate(input, Unit.Default).Resolve();
+            return Resolve();
         }
     }
 

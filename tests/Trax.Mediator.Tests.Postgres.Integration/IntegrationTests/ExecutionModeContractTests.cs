@@ -185,15 +185,13 @@ public class ExecutionModeContractTests : TestSetup
         : ServiceTrain<GatedDownstreamInput, Unit>,
             IGatedDownstreamTrain
     {
-        protected override async Task<Either<Exception, Unit>> RunInternal(
-            GatedDownstreamInput input
-        )
+        protected override async Task<Either<Exception, Unit>> Junctions()
         {
             DownstreamProbe.ReachedDownstream.TrySetResult();
             await DownstreamProbe.Downstream.Task;
             DownstreamProbe.CompletedAt = DateTime.UtcNow;
 
-            return Activate(input, Unit.Default).Resolve();
+            return Resolve();
         }
     }
 
