@@ -13,11 +13,15 @@ namespace Trax.Mediator.Services.ChainVerification;
 /// cannot run.
 /// </summary>
 /// <remarks>
-/// A chain is a declaration of junction types, so three things are decidable before any traffic
-/// arrives: that the chain can be read at all, that every junction it names can be built, and
-/// that every junction's input reaches Memory before the junction needs it. Left to runtime,
-/// each of those surfaces only on the path that happens to hit it, which for a rarely-taken train
-/// can be a long way from deployment.
+/// A chain is a declaration of junction types, so two things are decidable before any traffic
+/// arrives: that the chain can be read at all, and that every junction's input reaches Memory
+/// before the junction needs it. Left to runtime, each of those surfaces only on the path that
+/// happens to hit it, which for a rarely-taken train can be a long way from deployment.
+///
+/// <para>Whether a junction can be built is deliberately not checked. A junction takes its
+/// constructor arguments from Memory, which the chain fills as it runs, so answering that at
+/// startup would mean replaying the resolution rather than the types. An approximation of it
+/// rejected every train in the sample applications, all of which run.</para>
 ///
 /// <para>Every train is checked before anything is reported, so one start tells you about all of
 /// them rather than one per attempt. Opt out with
@@ -108,20 +112,11 @@ internal sealed class TrainChainStartupValidator(
             return $"{registration.ServiceTypeName}: its chain could not be read ({ex.Message})";
         }
 
-        foreach (var junction in chain.Steps.Select(s => s.Junction).Distinct())
-        {
-            if (junction is null || services.GetService(junction) is not null)
-                continue;
-
-            if (junction.GetConstructor(Type.EmptyTypes) is null)
-                return $"{registration.ServiceTypeName}: names junction '{junction.Name}', which "
-                    + "is neither registered nor constructible without arguments";
-        }
-
         var faults = Core.Monad.ChainVerification.Verify(
             chain,
             registration.InputType,
-            registration.OutputType
+            registration.OutputType,
+            type => services.GetService(type) is not null
         );
 
         return faults.Count == 0
