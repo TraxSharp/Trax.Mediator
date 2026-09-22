@@ -36,6 +36,23 @@ public partial class TraxMediatorBuilder
     /// when the authorization service is missing. Misapplication produces a process
     /// that silently runs authorized trains without any authorization check.
     /// </remarks>
+    /// <summary>
+    /// Stops the host reading every registered train's chain at startup.
+    /// </summary>
+    /// <remarks>
+    /// The check is on by default and refuses to start when a train names a junction that cannot
+    /// be built, or whose input never reaches Memory. Turn it off only for the blind spot named
+    /// in <c>ChainVerification</c>: it knows declared types, not the concrete ones that flow, so
+    /// a junction declaring an interface its runtime value implements only incidentally reads as
+    /// a fault.
+    /// </remarks>
+    public TraxMediatorBuilder SkipChainVerification()
+    {
+        _skipChainVerification = true;
+
+        return this;
+    }
+
     public TraxMediatorBuilder AllowMissingAuthorizationService()
     {
         _allowMissingAuthorizationService = true;

@@ -8,6 +8,7 @@ namespace Trax.Mediator.Configuration
         public int? GlobalMaxConcurrentRun { get; }
         public int MaxInputJsonBytes { get; }
         public int? PerPrincipalMaxConcurrentRun { get; }
+        public bool SkipChainVerification { get; }
         public Microsoft.Extensions.DependencyInjection.ServiceLifetime TrainLifetime { get; }
     }
     public class TraxBuilderWithMediator
@@ -25,6 +26,7 @@ namespace Trax.Mediator.Configuration
         public Trax.Mediator.Configuration.TraxMediatorBuilder GlobalConcurrentRunLimit(int maxConcurrent) { }
         public Trax.Mediator.Configuration.TraxMediatorBuilder PerPrincipalMaxConcurrentRun(int limit) { }
         public Trax.Mediator.Configuration.TraxMediatorBuilder ScanAssemblies(params System.Reflection.Assembly[] assemblies) { }
+        public Trax.Mediator.Configuration.TraxMediatorBuilder SkipChainVerification() { }
         public Trax.Mediator.Configuration.TraxMediatorBuilder TrainLifetime(Microsoft.Extensions.DependencyInjection.ServiceLifetime lifetime) { }
         public Trax.Mediator.Configuration.TraxMediatorBuilder WithMaxInputJsonBytes(int bytes) { }
     }
