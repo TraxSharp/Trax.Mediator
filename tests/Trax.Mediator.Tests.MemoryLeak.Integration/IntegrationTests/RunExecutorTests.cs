@@ -2,6 +2,7 @@ using System.Text.Json;
 using FluentAssertions;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
+using Trax.Core.Junction;
 using Trax.Effect.Attributes;
 using Trax.Effect.Configuration.TraxEffectConfiguration;
 using Trax.Effect.Data.InMemory.Extensions;
@@ -278,10 +279,8 @@ public class RunExecutorTests
 
     public class RunExecTrain : ServiceTrain<RunExecInput, RunExecOutput>, IRunExecTrain
     {
-        protected override Task<Either<Exception, RunExecOutput>> RunInternal(RunExecInput input) =>
-            Task.FromResult<Either<Exception, RunExecOutput>>(
-                new RunExecOutput { Value = $"processed:{input.Name}", Count = 42 }
-            );
+        protected override Task<Either<Exception, RunExecOutput>> Junctions() =>
+            Chain<BuildRunExecOutput>().Resolve();
     }
 
     public interface IRunUnitTrain : IServiceTrain<RunUnitInput, Unit>;
@@ -314,4 +313,11 @@ public class RunExecutorTests
     }
 
     #endregion
+
+    /// <summary>Builds the output these run-executor tests assert on.</summary>
+    internal sealed class BuildRunExecOutput : Junction<RunExecInput, RunExecOutput>
+    {
+        public override Task<RunExecOutput> Run(RunExecInput input) =>
+            Task.FromResult(new RunExecOutput { Value = $"processed:{input.Name}", Count = 42 });
+    }
 }

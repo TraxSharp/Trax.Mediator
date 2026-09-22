@@ -2,6 +2,7 @@ using System.Text.Json;
 using FluentAssertions;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
+using Trax.Core.Junction;
 using Trax.Effect.Attributes;
 using Trax.Effect.Configuration.TraxEffectConfiguration;
 using Trax.Effect.Data.InMemory.Extensions;
@@ -413,11 +414,8 @@ public class TrainExecutionServiceTests
 
     public class SlowExecTrain : ServiceTrain<SlowExecInput, Unit>, ISlowExecTrain
     {
-        protected override async Task<Either<Exception, Unit>> RunInternal(SlowExecInput input)
-        {
-            await Task.Delay(input.DelayMs);
-            return Unit.Default;
-        }
+        protected override Task<Either<Exception, Unit>> Junctions() =>
+            Chain<DelayForInput>().Resolve();
     }
 
     public record TypedExecInput
@@ -440,12 +438,8 @@ public class TrainExecutionServiceTests
 
     public class TypedExecTrain : ServiceTrain<TypedExecInput, TypedExecOutput>, ITypedExecTrain
     {
-        protected override Task<Either<Exception, TypedExecOutput>> RunInternal(
-            TypedExecInput input
-        ) =>
-            Task.FromResult<Either<Exception, TypedExecOutput>>(
-                new TypedExecOutput { Value = $"processed:{input.Name}", Count = 42 }
-            );
+        protected override Task<Either<Exception, TypedExecOutput>> Junctions() =>
+            Chain<BuildTypedExecOutput>().Resolve();
     }
 
     public interface IUnitExecTrain : IServiceTrain<UnitExecInput, Unit>;
@@ -457,4 +451,23 @@ public class TrainExecutionServiceTests
     }
 
     #endregion
+
+    /// <summary>Holds the run open for the interval the input names.</summary>
+    internal sealed class DelayForInput : Junction<SlowExecInput, Unit>
+    {
+        public override async Task<Unit> Run(SlowExecInput input)
+        {
+            // allowed-delay: the interval under test is the input, not a wait for a signal.
+            await Task.Delay(input.DelayMs, CancellationToken);
+
+            return Unit.Default;
+        }
+    }
+
+    /// <summary>Builds the typed output these execution tests assert on.</summary>
+    internal sealed class BuildTypedExecOutput : Junction<TypedExecInput, TypedExecOutput>
+    {
+        public override Task<TypedExecOutput> Run(TypedExecInput input) =>
+            Task.FromResult(new TypedExecOutput { Value = $"processed:{input.Name}", Count = 42 });
+    }
 }

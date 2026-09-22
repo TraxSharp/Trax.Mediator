@@ -395,20 +395,15 @@ public class LargeDataTrain : Train<LargeDataModel, SimpleOutput>
 
 public class VeryLargeDataTrain : Train<VeryLargeDataModel, SimpleOutput>
 {
-    protected override async Task<Either<Exception, SimpleOutput>> RunInternal(
-        VeryLargeDataModel input
-    )
-    {
-        var largeModel = new LargeDataModel(input.Name, input.Data);
-        return await Activate(input, largeModel).Chain<LargeDataJunction>().Resolve();
-    }
+    protected override Task<Either<Exception, SimpleOutput>> Junctions() =>
+        Chain<BuildLargeDataModel>().Chain<LargeDataJunction>().Resolve();
 }
 
 public class TupleTrain : Train<SimpleInput, (string Result, int Count, DateTime Timestamp)>
 {
-    protected override async Task<
+    protected override Task<
         Either<Exception, (string Result, int Count, DateTime Timestamp)>
-    > RunInternal(SimpleInput input) => await Activate(input).Chain<TupleJunction>().Resolve();
+    > Junctions() => Chain<TupleJunction>().Resolve();
 }
 
 // Testable train that exposes Memory dictionary for testing
@@ -447,4 +442,14 @@ public class TestableTrain : Train<SimpleInput, SimpleOutput>
             );
         (memoryProp?.GetValue(_monad) as Dictionary<Type, object>)?.Clear();
     }
+}
+
+/// <summary>
+/// Builds the large payload the memory tests measure. It is a junction because a train declares
+/// which junctions run; building the model is work, and work belongs in a junction.
+/// </summary>
+public class BuildLargeDataModel : Junction<VeryLargeDataModel, LargeDataModel>
+{
+    public override Task<LargeDataModel> Run(VeryLargeDataModel input) =>
+        Task.FromResult(new LargeDataModel(input.Name, input.Data));
 }
