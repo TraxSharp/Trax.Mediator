@@ -288,7 +288,7 @@ public class RunExecutorTests
 
     public class RunUnitTrain : ServiceTrain<RunUnitInput, Unit>, IRunUnitTrain
     {
-        protected override Task<Either<Exception, Unit>> RunInternal(RunUnitInput input) =>
+        protected override Task<Either<Exception, Unit>> Junctions() =>
             Task.FromResult<Either<Exception, Unit>>(Unit.Default);
     }
 
@@ -296,7 +296,7 @@ public class RunExecutorTests
 
     public class SlowRunTrain : ServiceTrain<SlowRunInput, Unit>, ISlowRunTrain
     {
-        protected override async Task<Either<Exception, Unit>> RunInternal(SlowRunInput input)
+        protected override async Task<Either<Exception, Unit>> Junctions()
         {
             await Task.Delay(TimeSpan.FromSeconds(30), CancellationToken);
             return Unit.Default;

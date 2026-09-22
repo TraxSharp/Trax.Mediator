@@ -372,15 +372,14 @@ public class TupleJunction : Junction<SimpleInput, (string Result, int Count, Da
 // Test trains
 public class SmallChainTrain : Train<SimpleInput, SimpleOutput>
 {
-    protected override async Task<Either<Exception, SimpleOutput>> RunInternal(SimpleInput input) =>
-        await Activate(input).Chain<ProcessJunction>().Resolve();
+    protected override async Task<Either<Exception, SimpleOutput>> Junctions() =>
+        await Chain<ProcessJunction>().Resolve();
 }
 
 public class LargeChainTrain : Train<SimpleInput, SimpleOutput>
 {
-    protected override async Task<Either<Exception, SimpleOutput>> RunInternal(SimpleInput input) =>
-        await Activate(input)
-            .Chain<ProcessJunction>()
+    protected override async Task<Either<Exception, SimpleOutput>> Junctions() =>
+        await Chain<ProcessJunction>()
             .Chain<ProcessOutputJunction>()
             .Chain<ProcessOutputJunction>()
             .Chain<ProcessOutputJunction>()
@@ -390,9 +389,8 @@ public class LargeChainTrain : Train<SimpleInput, SimpleOutput>
 
 public class LargeDataTrain : Train<LargeDataModel, SimpleOutput>
 {
-    protected override async Task<Either<Exception, SimpleOutput>> RunInternal(
-        LargeDataModel input
-    ) => await Activate(input).Chain<LargeDataJunction>().Resolve();
+    protected override async Task<Either<Exception, SimpleOutput>> Junctions() =>
+        await Chain<LargeDataJunction>().Resolve();
 }
 
 public class VeryLargeDataTrain : Train<VeryLargeDataModel, SimpleOutput>

@@ -162,13 +162,10 @@ public class PostgresContextTests : TestSetup
         : ServiceTrain<TestTrainWithinTrainInput, (ITestTrain, ITestTrainWithinTrain)>,
             ITestTrainWithinTrain
     {
-        protected override Task<Either<Exception, (ITestTrain, ITestTrainWithinTrain)>> RunInternal(
-            TestTrainWithinTrainInput input
-        ) =>
-            Activate(input)
-                .AddServices<ITestTrainWithinTrain>(this)
-                .Chain<JunctionToRunTestTrain>()
-                .Resolve();
+        protected override Task<
+            Either<Exception, (ITestTrain, ITestTrainWithinTrain)>
+        > Junctions() =>
+            AddServices<ITestTrainWithinTrain>(this).Chain<JunctionToRunTestTrain>().Resolve();
     }
 
     internal record TestTrainWithinTrainInput;

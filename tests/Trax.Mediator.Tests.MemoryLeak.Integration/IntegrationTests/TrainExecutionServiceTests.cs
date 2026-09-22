@@ -452,7 +452,7 @@ public class TrainExecutionServiceTests
 
     public class UnitExecTrain : ServiceTrain<UnitExecInput, Unit>, IUnitExecTrain
     {
-        protected override Task<Either<Exception, Unit>> RunInternal(UnitExecInput input) =>
+        protected override Task<Either<Exception, Unit>> Junctions() =>
             Task.FromResult<Either<Exception, Unit>>(Unit.Default);
     }
 
