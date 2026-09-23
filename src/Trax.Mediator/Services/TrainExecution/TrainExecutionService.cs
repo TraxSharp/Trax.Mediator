@@ -50,6 +50,13 @@ public class TrainExecutionService(
     /// </summary>
     private static readonly ConcurrentDictionary<Type, PropertyInfo?> DeferPromotionCache = new();
 
+    /// <summary>
+    /// Per-train-type cache of the concrete train's overridden <c>QueueSubjectKey</c> method, or
+    /// null when the train does not override it. Trains that do not override it are never resolved
+    /// for it, so the common enqueue path is unchanged.
+    /// </summary>
+    private static readonly ConcurrentDictionary<Type, MethodInfo?> SubjectKeyOverrideCache = new();
+
     public async Task<QueueTrainResult> QueueAsync(
         string trainName,
         string inputJson,
@@ -82,6 +89,8 @@ public class TrainExecutionService(
                 DeferPromotion = deferPromotion,
             }
         );
+
+        entry.SubjectKey = ResolveSubjectKey(registration, input, entry.ExternalId);
 
         if (deferPromotion)
             return await QueueWithDeferredPromotionAsync(registration, input, entry, ct);
@@ -151,6 +160,66 @@ public class TrainExecutionService(
             registration.OutputType,
             ct
         );
+    }
+
+    /// <summary>
+    /// Asks the train what this mutation touches, so dispatch can keep two entries naming the same
+    /// subject from running at once. Null for every train that does not override
+    /// <c>QueueSubjectKey</c>, which is the default.
+    /// </summary>
+    /// <remarks>
+    /// A throw propagates and aborts the enqueue rather than degrading to null: a key that cannot
+    /// be computed means the caller's serialization guarantee cannot be honoured, and failing
+    /// loudly is better than quietly running the work unserialized.
+    /// </remarks>
+    private string? ResolveSubjectKey(
+        TrainRegistration registration,
+        object input,
+        string externalId
+    )
+    {
+        var subjectKey = SubjectKeyOverrideCache.GetOrAdd(
+            registration.ImplementationType,
+            static type =>
+            {
+                var method = type.GetMethod(
+                    "QueueSubjectKey",
+                    BindingFlags.Instance | BindingFlags.NonPublic
+                );
+
+                var declaringType = method?.DeclaringType;
+                if (declaringType is { IsGenericType: true })
+                    declaringType = declaringType.GetGenericTypeDefinition();
+
+                // Only a concrete override counts — the base returns null for every train.
+                return declaringType != typeof(ServiceTrain<,>) ? method : null;
+            }
+        );
+
+        if (subjectKey is null)
+            return null;
+
+        var train = serviceProvider.GetRequiredService(registration.ServiceType);
+
+        var keyMetadata = Metadata.Create(
+            new CreateMetadata
+            {
+                Name = registration.ServiceType.FullName!,
+                ExternalId = externalId,
+                Input = input,
+            }
+        );
+
+        try
+        {
+            return (string?)subjectKey.Invoke(train, [keyMetadata]);
+        }
+        catch (TargetInvocationException ex)
+        {
+            // Unwrap so the caller sees the train's real exception, not the reflection wrapper.
+            ExceptionDispatchInfo.Throw(ex.InnerException ?? ex);
+            throw;
+        }
     }
 
     /// <summary>

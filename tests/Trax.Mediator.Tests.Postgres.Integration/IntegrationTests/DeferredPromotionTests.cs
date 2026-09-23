@@ -76,10 +76,7 @@ public class DeferredPromotionTests : TestSetup
     [Test]
     public async Task A_train_without_a_hook_is_confirmed_immediately()
     {
-        var result = await Execution.QueueAsync(
-            typeof(IPlainTrain).FullName!,
-            "{\"Value\":\"x\"}"
-        );
+        var result = await Execution.QueueAsync(typeof(IPlainTrain).FullName!, "{\"Value\":\"x\"}");
 
         (await EntryAsync(result.WorkQueueId))!
             .ConfirmedAt.Should()
@@ -96,7 +93,9 @@ public class DeferredPromotionTests : TestSetup
 
         (await EntryAsync(result.WorkQueueId))!
             .ConfirmedAt.Should()
-            .NotBeNull("overriding OnQueue alone must not change when the entry becomes dispatchable");
+            .NotBeNull(
+                "overriding OnQueue alone must not change when the entry becomes dispatchable"
+            );
     }
 
     // ── opt-in: deferred promotion ──────────────────────────────────
