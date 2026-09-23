@@ -2,8 +2,10 @@ using FluentAssertions;
 using LanguageExt;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Trax.Effect.Data.Services.EnqueueContext;
 using Trax.Effect.Data.Services.IDataContextFactory;
 using Trax.Effect.Data.Services.WorkQueuePromotion;
+using Trax.Effect.Enums;
 using Trax.Effect.Models.Metadata;
 using Trax.Effect.Models.WorkQueue;
 using Trax.Effect.Models.WorkQueue.DTOs;
@@ -194,14 +196,113 @@ public class DeferredPromotionTests : TestSetup
             .Be(0);
     }
 
+    [Test]
+    public async Task CancelStaleAsync_cancels_only_entries_older_than_the_window()
+    {
+        var stale = await InsertUnconfirmedAsync(DateTime.UtcNow.AddMinutes(-30));
+        var fresh = await InsertUnconfirmedAsync(DateTime.UtcNow);
+
+        var cancelled = await Promotion.CancelStaleAsync(
+            TimeSpan.FromMinutes(10),
+            CancellationToken.None
+        );
+
+        cancelled.Should().Be(1);
+        (await EntryAsync(stale))!.Status.Should().Be(WorkQueueStatus.Cancelled);
+        (await EntryAsync(fresh))!.Status.Should().Be(WorkQueueStatus.Queued);
+    }
+
+    [Test]
+    public async Task PromoteAsync_leaves_an_entry_cancelled_while_its_hook_ran_cancelled()
+    {
+        var id = await InsertUnconfirmedAsync(DateTime.UtcNow);
+
+        var factory = Scope.ServiceProvider.GetRequiredService<IDataContextProviderFactory>();
+        using (var context = await factory.CreateDbContextAsync(CancellationToken.None))
+            await context
+                .WorkQueues.Where(w => w.Id == id)
+                .ExecuteUpdateAsync(u => u.SetProperty(w => w.Status, WorkQueueStatus.Cancelled));
+
+        (await Promotion.PromoteAsync(id, CancellationToken.None))
+            .Should()
+            .BeFalse("confirming it would revive work an operator cancelled");
+        (await EntryAsync(id))!.ConfirmedAt.Should().BeNull();
+    }
+
+    [Test]
+    public async Task A_caller_that_gives_up_after_the_hook_returned_still_gets_its_entry_confirmed()
+    {
+        using var caller = new CancellationTokenSource();
+        Observed.CancelCallerAfterHook = caller;
+
+        var result = await Execution.QueueAsync(
+            typeof(IDeferringCancelAfterTrain).FullName!,
+            "{\"Value\":\"x\"}",
+            ct: caller.Token
+        );
+
+        (await EntryAsync(result.WorkQueueId))!
+            .ConfirmedAt.Should()
+            .NotBeNull(
+                "once the hook has returned its side-effect may have landed, so the entry that "
+                    + "consumes it must not be stranded because the caller stopped listening"
+            );
+    }
+
+    [Test]
+    public async Task A_caller_that_gives_up_during_the_hook_leaves_no_entry()
+    {
+        using var caller = new CancellationTokenSource();
+        Observed.CancelCallerDuringHook = caller;
+
+        var act = async () =>
+            await Execution.QueueAsync(
+                typeof(IDeferringCancelDuringTrain).FullName!,
+                "{\"Value\":\"x\"}",
+                ct: caller.Token
+            );
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+
+        var factory = Scope.ServiceProvider.GetRequiredService<IDataContextProviderFactory>();
+        using var context = await factory.CreateDbContextAsync(CancellationToken.None);
+        (await context.WorkQueues.CountAsync(w => w.TrainName!.Contains("CancelDuringTrain")))
+            .Should()
+            .Be(
+                0,
+                "removing the staged entry must not depend on the token that was just cancelled"
+            );
+    }
+
+    [Test]
+    public async Task A_deferring_hook_has_no_enqueue_context()
+    {
+        await Execution.QueueAsync(typeof(IDeferringTrain).FullName!, "{\"Value\":\"x\"}");
+
+        Observed
+            .ContextDuringHook.Should()
+            .ContainSingle()
+            .Which.Should()
+            .BeFalse("the entry is already committed, so there is no transaction to join");
+    }
+
     // ── probes ──────────────────────────────────────────────────────
 
     /// <summary>What a hook saw about its own entry while it was running.</summary>
     public static class Observed
     {
         public static readonly List<DateTime?> ConfirmedAtDuringHook = [];
+        public static readonly List<bool> ContextDuringHook = [];
+        public static CancellationTokenSource? CancelCallerAfterHook;
+        public static CancellationTokenSource? CancelCallerDuringHook;
 
-        public static void Clear() => ConfirmedAtDuringHook.Clear();
+        public static void Clear()
+        {
+            ConfirmedAtDuringHook.Clear();
+            ContextDuringHook.Clear();
+            CancelCallerAfterHook = null;
+            CancelCallerDuringHook = null;
+        }
     }
 
     public record DeferInput
@@ -245,14 +346,17 @@ public class DeferredPromotionTests : TestSetup
 
     public interface IDeferringTrain : IServiceTrain<DeferInput, Unit>;
 
-    public class DeferringTrain(IDataContextProviderFactory factory)
-        : ServiceTrain<DeferInput, Unit>,
-            IDeferringTrain
+    public class DeferringTrain(
+        IDataContextProviderFactory factory,
+        IEnqueueContextAccessor enqueueContext
+    ) : ServiceTrain<DeferInput, Unit>, IDeferringTrain
     {
         protected override bool DeferQueuePromotion => true;
 
         protected override async Task OnQueue(Metadata metadata, CancellationToken ct)
         {
+            Observed.ContextDuringHook.Add(enqueueContext.Current is not null);
+
             // Read the entry back on a fresh connection: the staging commit has landed, so the
             // row exists and must still be unconfirmed at this point.
             using var context = await factory.CreateDbContextAsync(ct);
@@ -278,5 +382,51 @@ public class DeferredPromotionTests : TestSetup
 
         protected override Task<Either<Exception, Unit>> Junctions() =>
             Task.FromResult<Either<Exception, Unit>>(Unit.Default);
+    }
+
+    public record CancelAfterInput
+    {
+        public string Value { get; init; } = string.Empty;
+    }
+
+    public record CancelDuringInput
+    {
+        public string Value { get; init; } = string.Empty;
+    }
+
+    public interface IDeferringCancelAfterTrain : IServiceTrain<CancelAfterInput, Unit>;
+
+    public class DeferringCancelAfterTrain
+        : ServiceTrain<CancelAfterInput, Unit>,
+            IDeferringCancelAfterTrain
+    {
+        protected override bool DeferQueuePromotion => true;
+
+        protected override Task OnQueue(Metadata metadata, CancellationToken ct)
+        {
+            // The hook succeeds, and the caller gives up before promotion runs.
+            Observed.CancelCallerAfterHook?.Cancel();
+            return Task.CompletedTask;
+        }
+
+        protected override Task<Either<Exception, Unit>> Junctions() => Task.FromResult(Resolve());
+    }
+
+    public interface IDeferringCancelDuringTrain : IServiceTrain<CancelDuringInput, Unit>;
+
+    public class DeferringCancelDuringTrain
+        : ServiceTrain<CancelDuringInput, Unit>,
+            IDeferringCancelDuringTrain
+    {
+        protected override bool DeferQueuePromotion => true;
+
+        protected override Task OnQueue(Metadata metadata, CancellationToken ct)
+        {
+            Observed.CancelCallerDuringHook?.Cancel();
+            ct.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }
+
+        protected override Task<Either<Exception, Unit>> Junctions() => Task.FromResult(Resolve());
     }
 }

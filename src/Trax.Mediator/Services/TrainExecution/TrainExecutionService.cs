@@ -70,23 +70,20 @@ public class TrainExecutionService(
 
         registration.ServiceType.FullName.AssertLoaded();
 
-        // No input at all is a real case — an entry can be queued for a train whose input the
-        // dispatcher will supply, and it is stored as null rather than as a default instance so
-        // that "nothing was given" stays distinguishable from "an empty object was given".
-        object? input = null;
-        string? serializedInput = null;
+        // No input is read as an empty object. A run needs an input instance, and the runner
+        // refuses an entry that has none, so storing null only deferred the failure to dispatch,
+        // where nobody who could fix it would see it. A train whose input cannot be built from
+        // an empty object fails here instead.
+        var json = string.IsNullOrWhiteSpace(inputJson) ? "{}" : inputJson;
 
-        if (!string.IsNullOrWhiteSpace(inputJson))
-        {
-            EnforceInputSizeCap(inputJson, registration);
-            input = DeserializeInput(inputJson, registration);
+        EnforceInputSizeCap(json, registration);
+        var input = DeserializeInput(json, registration);
 
-            serializedInput = JsonSerializer.Serialize(
-                input,
-                registration.InputType,
-                TraxJsonSerializationOptions.ManifestProperties
-            );
-        }
+        var serializedInput = JsonSerializer.Serialize(
+            input,
+            registration.InputType,
+            TraxJsonSerializationOptions.ManifestProperties
+        );
 
         var deferPromotion = ResolveDeferPromotion(registration);
 
@@ -97,14 +94,12 @@ public class TrainExecutionService(
                 Input = serializedInput,
                 InputTypeName = registration.InputType.FullName,
                 Priority = priority,
-                ScheduledAt = scheduledAt,
+                ScheduledAt = ToUtc(scheduledAt),
                 DeferPromotion = deferPromotion,
             }
         );
 
-        entry.SubjectKey = input is null
-            ? null
-            : ResolveSubjectKey(registration, input, entry.ExternalId);
+        entry.SubjectKey = ResolveSubjectKey(registration, input, entry.ExternalId);
 
         if (deferPromotion)
             return await QueueWithDeferredPromotionAsync(registration, input, entry, ct);
@@ -113,27 +108,30 @@ public class TrainExecutionService(
 
         // Queue-time hook: fire OnQueue before the work queue row is inserted, so a consumer
         // can perform a side-effect (e.g. an optimistic shadow write) the moment the mutation
-        // is accepted. The entry's ExternalId is the correlation key — the eventual run executes
+        // is accepted. The entry's ExternalId is the correlation key; the eventual run executes
         // under the same ExternalId. Exceptions propagate and abort the enqueue.
         //
         // Track() is change-tracking only, so the row still has not been INSERTed when the hook
         // runs. Tracking it first lets the hook's own writes join the same SaveChanges, and the
         // transaction below makes the pair atomic: a hook that throws after writing leaves
         // nothing behind, which is the crash window this path used to carry. A hook that writes
-        // through its OWN DbContext is not covered — a separately-pooled context has its own
+        // through its OWN DbContext is not covered: a separately-pooled context has its own
         // connection and therefore its own transaction.
         var transaction = await TryBeginTransactionAsync(dataContext, ct);
         try
         {
             await dataContext.Track(entry);
 
-            // Resolved rather than injected so the public constructor signature is unchanged —
-            // adding a parameter to a public service type is a breaking API change for anyone
-            // constructing it directly.
-            var enqueueContext = serviceProvider.GetRequiredService<IEnqueueContextAccessor>();
+            if (ResolveOnQueueOverride(registration.ImplementationType) is not null)
+            {
+                // Resolved rather than injected so the public constructor signature is
+                // unchanged: adding a parameter to a public service type is a breaking API
+                // change for anyone constructing it directly.
+                var enqueueContext = serviceProvider.GetRequiredService<IEnqueueContextAccessor>();
 
-            using (enqueueContext.Enter(dataContext))
-                await InvokeQueueHookAsync(registration, input, entry.ExternalId, ct);
+                using (enqueueContext.Enter(dataContext))
+                    await InvokeQueueHookAsync(registration, input, entry.ExternalId, ct);
+            }
 
             await dataContext.SaveChanges(ct);
 
@@ -198,7 +196,8 @@ public class TrainExecutionService(
             {
                 var method = type.GetMethod(
                     "QueueSubjectKey",
-                    BindingFlags.Instance | BindingFlags.NonPublic
+                    BindingFlags.Instance | BindingFlags.NonPublic,
+                    [typeof(Metadata)]
                 );
 
                 var declaringType = method?.DeclaringType;
@@ -224,9 +223,11 @@ public class TrainExecutionService(
             }
         );
 
+        string? key;
+
         try
         {
-            return (string?)subjectKey.Invoke(train, [keyMetadata]);
+            key = (string?)subjectKey.Invoke(train, [keyMetadata]);
         }
         catch (TargetInvocationException ex)
         {
@@ -234,7 +235,49 @@ public class TrainExecutionService(
             ExceptionDispatchInfo.Throw(ex.InnerException ?? ex);
             throw;
         }
+
+        if (key is null)
+            return null;
+
+        // Empty is refused rather than treated as a subject: every train returning it would be
+        // serialized against every other, and it is almost always an unset identity.
+        if (key.Length == 0)
+            throw new InvalidOperationException(
+                $"{registration.ServiceTypeName}.QueueSubjectKey returned an empty key. Return "
+                    + "null when the entry should not be serialized."
+            );
+
+        // The key is indexed. One too long for the index inserts fine while queued and then
+        // fails the claim on every cycle, so it is refused here, where the caller sees it.
+        if (key.Length > MaxSubjectKeyLength)
+            throw new InvalidOperationException(
+                $"{registration.ServiceTypeName}.QueueSubjectKey returned a key of {key.Length} "
+                    + $"characters; the limit is {MaxSubjectKeyLength}. Use a record identity, or "
+                    + "a hash of a longer one."
+            );
+
+        return key;
     }
+
+    /// <summary>
+    /// The longest subject key an enqueue accepts. Well inside the Postgres btree entry limit
+    /// even when every character takes four bytes.
+    /// </summary>
+    private const int MaxSubjectKeyLength = 512;
+
+    /// <summary>
+    /// A scheduled time stored as UTC whatever it arrived as. Local times are converted; an
+    /// unspecified kind is taken to already be UTC, which is how a timestamp without an offset
+    /// arrives from JSON. Npgsql refuses a non-UTC value for a timestamptz column, while the
+    /// other providers store it as given, so without this the providers disagree.
+    /// </summary>
+    private static DateTime? ToUtc(DateTime? value) =>
+        value?.Kind switch
+        {
+            DateTimeKind.Local => value.Value.ToUniversalTime(),
+            DateTimeKind.Unspecified => DateTime.SpecifyKind(value.Value, DateTimeKind.Utc),
+            _ => value,
+        };
 
     /// <summary>
     /// The two-phase enqueue, used when a train defers promotion: commit the entry unconfirmed,
@@ -269,12 +312,17 @@ public class TrainExecutionService(
         }
         catch
         {
-            await RemoveStagedEntryAsync(entry.Id, ct);
+            // Not the caller's token: a caller that gave up is the likeliest reason the hook
+            // threw, and a staged entry left behind would be a rejected mutation still waiting.
+            await RemoveStagedEntryAsync(entry.Id);
             throw;
         }
 
+        // Once the hook has returned, the mutation is accepted and its side-effect may have
+        // landed. Confirming the entry is the other half of that, so it does not take the
+        // caller's token either; see effect/0005 for the same reasoning on a run's outcome.
         var promotion = serviceProvider.GetRequiredService<IWorkQueuePromotion>();
-        await promotion.PromoteAsync(entry.Id, ct);
+        await promotion.PromoteAsync(entry.Id, CancellationToken.None);
 
         return new QueueTrainResult(entry.Id, entry.ExternalId);
     }
@@ -282,10 +330,28 @@ public class TrainExecutionService(
     /// <summary>
     /// Removes an entry staged for a hook that then threw, so a rejected mutation leaves no trace.
     /// </summary>
-    private async Task RemoveStagedEntryAsync(long workQueueId, CancellationToken ct)
+    private async Task RemoveStagedEntryAsync(long workQueueId)
     {
-        using var context = await dataContextFactory.CreateDbContextAsync(ct);
-        await context.WorkQueues.Where(w => w.Id == workQueueId).ExecuteDeleteAsync(ct);
+        using var context = await dataContextFactory.CreateDbContextAsync(CancellationToken.None);
+
+        if (context is DbContext db && !db.Database.IsRelational())
+        {
+            // The in-memory provider does not translate ExecuteDelete.
+            var staged = await db.Set<WorkQueue>()
+                .FirstOrDefaultAsync(w => w.Id == workQueueId, CancellationToken.None);
+
+            if (staged is not null)
+            {
+                db.Remove(staged);
+                await db.SaveChangesAsync(CancellationToken.None);
+            }
+
+            return;
+        }
+
+        await context
+            .WorkQueues.Where(w => w.Id == workQueueId)
+            .ExecuteDeleteAsync(CancellationToken.None);
     }
 
     /// <summary>
@@ -397,7 +463,8 @@ public class TrainExecutionService(
             {
                 var method = type.GetMethod(
                     "OnQueue",
-                    BindingFlags.Instance | BindingFlags.NonPublic
+                    BindingFlags.Instance | BindingFlags.NonPublic,
+                    [typeof(Metadata), typeof(CancellationToken)]
                 );
 
                 var declaringType = method?.DeclaringType;
