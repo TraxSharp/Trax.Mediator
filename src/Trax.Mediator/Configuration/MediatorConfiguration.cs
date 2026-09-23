@@ -45,9 +45,10 @@ public class MediatorConfiguration
     /// </summary>
     /// <remarks>
     /// The check is on by default: a chain is a declaration, so whether it can run is decidable
-    /// before any traffic arrives. Turn it off only for the blind spot named in
-    /// <c>ChainVerification</c>, where a junction declares an interface that the value flowing in
-    /// implements only incidentally. Set with
+    /// before any traffic arrives. There are two reasons to turn it off. One is the blind spot
+    /// named in <c>ChainVerification</c>, where a junction declares an interface that the value
+    /// flowing in implements only incidentally. The other is temporary: a codebase being moved
+    /// onto <c>Junctions()</c> whose chains do not pass yet. Set with
     /// <c>TraxMediatorBuilder.SkipChainVerification()</c>.
     /// </remarks>
     public bool SkipChainVerification { get; internal set; }

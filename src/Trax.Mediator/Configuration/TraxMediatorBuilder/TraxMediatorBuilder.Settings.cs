@@ -30,11 +30,11 @@ public partial class TraxMediatorBuilder
     /// <remarks>
     /// The check is on by default and refuses to start when a train's chain cannot run: a
     /// junction whose input never reaches Memory, a chain that ends without the train's return
-    /// type, or a <c>Junctions()</c> that does work instead of declaring a chain. Turn it off only
-    /// for the blind spot named in <c>ChainVerification</c>: it knows the train's declared input
-    /// type, not the concrete one that flows, so a junction asking for an interface only a
-    /// subtype of the input implements reads as a fault. It is also the escape hatch while a
-    /// codebase is being moved onto <c>Junctions()</c>.
+    /// type, or a <c>Junctions()</c> that does work instead of declaring a chain. There are two
+    /// reasons to turn it off. One is the blind spot named in <c>ChainVerification</c>: it knows
+    /// the train's declared input type, not the concrete one that flows, so a junction asking for
+    /// an interface only a subtype of the input implements reads as a fault. The other is
+    /// temporary: a codebase being moved onto <c>Junctions()</c> whose chains do not pass yet.
     /// </remarks>
     public TraxMediatorBuilder SkipChainVerification()
     {

@@ -25,9 +25,10 @@ namespace Trax.Mediator.Services.ChainVerification;
 ///
 /// <para>Every train is checked before anything is reported, so one start tells you about all of
 /// them rather than one per attempt. Opt out with
-/// <c>AddMediator(m => m.SkipChainVerification())</c>, which is worth doing only for the blind
-/// spot named in <c>ChainVerification</c>: a junction asking for an interface that only a subtype
-/// of the train's declared input implements.</para>
+/// <c>AddMediator(m => m.SkipChainVerification())</c> for the blind spot named in
+/// <c>ChainVerification</c> (a junction asking for an interface that only a subtype of the
+/// train's declared input implements), or temporarily while a codebase whose chains do not pass
+/// yet is moved onto <c>Junctions()</c>.</para>
 /// </remarks>
 internal sealed class TrainChainStartupValidator(
     ITrainDiscoveryService discoveryService,
