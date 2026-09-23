@@ -439,10 +439,13 @@ public class TrainExecutionService(
     }
 
     /// <summary>
-    /// Begins a transaction for the enqueue, or returns null when the configured provider does not
-    /// support one (the in-memory provider, used widely in tests, does not). A null transaction
-    /// degrades to the previous behaviour — the queue row and any ambient-context write still share
-    /// one <c>SaveChanges</c>, they are simply not wrapped in an explicit transaction.
+    /// Begins a transaction for the enqueue, or returns null when beginning one throws
+    /// <see cref="InvalidOperationException"/> or <see cref="NotSupportedException"/>, as a
+    /// provider without transactions does unless told otherwise. Trax's in-memory provider is not
+    /// such a case: <c>InMemoryContextProviderFactory</c> ignores EF's
+    /// <c>TransactionIgnoredWarning</c>, so the call succeeds and returns a transaction whose
+    /// commit and rollback do nothing. Either way the queue row and any ambient-context write still
+    /// share one <c>SaveChanges</c>; they are simply not wrapped in a real transaction.
     /// </summary>
     private static async Task<IDataContextTransaction?> TryBeginTransactionAsync(
         IDataContext dataContext,
