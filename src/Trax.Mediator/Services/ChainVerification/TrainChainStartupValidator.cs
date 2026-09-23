@@ -26,8 +26,8 @@ namespace Trax.Mediator.Services.ChainVerification;
 /// <para>Every train is checked before anything is reported, so one start tells you about all of
 /// them rather than one per attempt. Opt out with
 /// <c>AddMediator(m => m.SkipChainVerification())</c>, which is worth doing only for the blind
-/// spot named in <c>ChainVerification</c>: a junction declaring an interface that the value
-/// flowing in implements only incidentally.</para>
+/// spot named in <c>ChainVerification</c>: a junction asking for an interface that only a subtype
+/// of the train's declared input implements.</para>
 /// </remarks>
 internal sealed class TrainChainStartupValidator(
     ITrainDiscoveryService discoveryService,
@@ -112,12 +112,26 @@ internal sealed class TrainChainStartupValidator(
             return $"{registration.ServiceTypeName}: its chain could not be read ({ex.Message})";
         }
 
-        var faults = Core.Monad.ChainVerification.Verify(
-            chain,
-            registration.InputType,
-            registration.OutputType,
-            type => services.GetService(type) is not null
-        );
+        // Asks whether the container can supply a type without building one. Resolving each
+        // candidate would construct services at boot, and a factory that only works inside a
+        // request (one reading HttpContext, say) would crash startup instead of answering.
+        var isService = services.GetService<IServiceProviderIsService>();
+
+        IReadOnlyList<ChainFault> faults;
+
+        try
+        {
+            faults = Core.Monad.ChainVerification.Verify(
+                chain,
+                registration.InputType,
+                registration.OutputType,
+                type => isService?.IsService(type) ?? services.GetService(type) is not null
+            );
+        }
+        catch (Exception ex)
+        {
+            return $"{registration.ServiceTypeName}: its chain could not be verified ({ex.Message})";
+        }
 
         return faults.Count == 0
             ? null

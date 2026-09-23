@@ -25,6 +25,25 @@ public partial class TraxMediatorBuilder
     }
 
     /// <summary>
+    /// Stops the host reading every registered train's chain at startup.
+    /// </summary>
+    /// <remarks>
+    /// The check is on by default and refuses to start when a train's chain cannot run: a
+    /// junction whose input never reaches Memory, a chain that ends without the train's return
+    /// type, or a <c>Junctions()</c> that does work instead of declaring a chain. Turn it off only
+    /// for the blind spot named in <c>ChainVerification</c>: it knows the train's declared input
+    /// type, not the concrete one that flows, so a junction asking for an interface only a
+    /// subtype of the input implements reads as a fault. It is also the escape hatch while a
+    /// codebase is being moved onto <c>Junctions()</c>.
+    /// </remarks>
+    public TraxMediatorBuilder SkipChainVerification()
+    {
+        _skipChainVerification = true;
+
+        return this;
+    }
+
+    /// <summary>
     /// Opts the host out of the startup check that fails when trains carry
     /// <c>[TraxAuthorize]</c> but no <c>ITrainAuthorizationService</c> is registered.
     /// Intended for processes that never serve API submissions (e.g. a standalone
@@ -36,23 +55,6 @@ public partial class TraxMediatorBuilder
     /// when the authorization service is missing. Misapplication produces a process
     /// that silently runs authorized trains without any authorization check.
     /// </remarks>
-    /// <summary>
-    /// Stops the host reading every registered train's chain at startup.
-    /// </summary>
-    /// <remarks>
-    /// The check is on by default and refuses to start when a train names a junction that cannot
-    /// be built, or whose input never reaches Memory. Turn it off only for the blind spot named
-    /// in <c>ChainVerification</c>: it knows declared types, not the concrete ones that flow, so
-    /// a junction declaring an interface its runtime value implements only incidentally reads as
-    /// a fault.
-    /// </remarks>
-    public TraxMediatorBuilder SkipChainVerification()
-    {
-        _skipChainVerification = true;
-
-        return this;
-    }
-
     public TraxMediatorBuilder AllowMissingAuthorizationService()
     {
         _allowMissingAuthorizationService = true;

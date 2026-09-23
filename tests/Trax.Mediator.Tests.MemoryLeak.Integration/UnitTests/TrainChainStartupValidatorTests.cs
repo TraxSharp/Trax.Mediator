@@ -15,10 +15,11 @@ namespace Trax.Mediator.Tests.MemoryLeak.Integration.UnitTests;
 /// <summary>
 /// The host reads every registered train's chain before it serves traffic.
 ///
-/// <para>A chain names junction types, so three things are decidable at startup: that it can be
-/// read, that every junction it names can be built, and that every junction's input reaches
-/// Memory before it is needed. Each of those otherwise waits for something to run the train, which
-/// for a rarely-taken train can be a long way from deployment.</para>
+/// <para>A chain names junction types, so two things are decidable at startup: that it can be
+/// read as a declaration, and that every junction's input reaches Memory, or can be supplied by the
+/// container, before it is needed. Each of those otherwise waits for something to run the train,
+/// which for a rarely-taken train can be a long way from deployment. Whether a junction can be
+/// constructed is deliberately not checked.</para>
 /// </summary>
 [TestFixture]
 public class TrainChainStartupValidatorTests
@@ -27,19 +28,37 @@ public class TrainChainStartupValidatorTests
     /// Starts a validator that sees exactly one train. Discovery is substituted rather than
     /// scanned so each case is judged on its own train and not on the others in this assembly.
     /// </summary>
-    private static async Task<Exception?> Start<TService, TTrain>(bool skip = false)
+    private static Task<Exception?> Start<TService, TTrain>(
+        bool skip = false,
+        Action<IServiceCollection>? configure = null
+    )
         where TService : class
-        where TTrain : class, TService
+        where TTrain : class, TService =>
+        StartMany(
+            [(typeof(TService), typeof(TTrain), Registration<TService, TTrain>())],
+            skip,
+            configure
+        );
+
+    private static async Task<Exception?> StartMany(
+        (Type Service, Type Train, TrainRegistration Registration)[] trains,
+        bool skip = false,
+        Action<IServiceCollection>? configure = null
+    )
     {
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddTrax(trax => trax.AddEffects(effects => effects));
-        services.AddScopedTraxRoute<TService, TTrain>();
+
+        foreach (var (service, train, _) in trains)
+            services.AddScoped(service, train);
+
+        configure?.Invoke(services);
 
         await using var provider = services.BuildServiceProvider();
 
         var discovery = Substitute.For<ITrainDiscoveryService>();
-        discovery.DiscoverTrains().Returns([Registration<TService, TTrain>()]);
+        discovery.DiscoverTrains().Returns(trains.Select(t => t.Registration).ToList());
 
         var validator = new TrainChainStartupValidator(
             discovery,
@@ -111,6 +130,88 @@ public class TrainChainStartupValidatorTests
             .Should()
             .BeNull("the opt-out exists for the declared-versus-concrete blind spot");
 
+    [Test]
+    public async Task Startup_WhenAJunctionsInputComesFromTheContainer_Starts() =>
+        (
+            await Start<IContainerInputTrain, ContainerInputTrain>(configure: services =>
+                services.AddSingleton<IChainProbeService, ChainProbeService>()
+            )
+        )
+            .Should()
+            .BeNull("a junction input not in Memory is resolved from the container at runtime");
+
+    [Test]
+    public async Task Startup_WhenAServiceCanOnlyBeBuiltInsideARequest_StillStarts() =>
+        (
+            await Start<IContainerInputTrain, ContainerInputTrain>(configure: services =>
+                services.AddScoped<IChainProbeService>(_ =>
+                    throw new InvalidOperationException("no HttpContext outside a request")
+                )
+            )
+        )
+            .Should()
+            .BeNull(
+                "whether the container can supply a type is answered without building one, so a "
+                    + "request-only factory cannot crash startup"
+            );
+
+    [Test]
+    public async Task Startup_WhenAChainSeedsAServiceWithAddServices_Starts() =>
+        (await Start<ISeedingTrain, SeedingTrain>())
+            .Should()
+            .BeNull("a value handed to AddServices is in Memory for the junction after it");
+
+    [Test]
+    public async Task Startup_WhenAnAsyncChainReadsItsInput_RefusesToStart()
+    {
+        var failure = await Start<IAsyncReadsInputTrain, AsyncReadsInputTrain>();
+
+        failure.Should().BeOfType<TrainException>();
+        failure!
+            .Message.Should()
+            .Contain(
+                "TrainInput",
+                "an async body's exception lands in its task, and reading it as clean would hide it"
+            );
+    }
+
+    [Test]
+    public async Task Startup_WhenAChainAwaitsWorkBeforeDeclaring_RefusesToStart()
+    {
+        var failure = await Start<IAwaitingTrain, AwaitingTrain>();
+
+        failure.Should().BeOfType<TrainException>();
+        failure!.Message.Should().Contain("awaited something");
+    }
+
+    [Test]
+    public async Task Startup_WhenSeveralTrainsCannotRun_ReportsEveryOne()
+    {
+        var failure = await StartMany([
+            (
+                typeof(IBrokenFlowTrain),
+                typeof(BrokenFlowTrain),
+                Registration<IBrokenFlowTrain, BrokenFlowTrain>()
+            ),
+            (
+                typeof(IAwaitingTrain),
+                typeof(AwaitingTrain),
+                Registration<IAwaitingTrain, AwaitingTrain>()
+            ),
+            (
+                typeof(IWellFormedTrain),
+                typeof(WellFormedTrain),
+                Registration<IWellFormedTrain, WellFormedTrain>()
+            ),
+        ]);
+
+        failure!
+            .Message.Should()
+            .Contain("2 of 3", "one start reports every train rather than one per attempt")
+            .And.Contain(nameof(IBrokenFlowTrain))
+            .And.Contain(nameof(IAwaitingTrain));
+    }
+
     /// <summary>
     /// A dedicated input type. These trains are discovered by assembly scan like any other, so a
     /// shared input type such as string would register a train for it and change what other
@@ -153,5 +254,53 @@ public class TrainChainStartupValidatorTests
             TrainInput.Value.Length > 0
                 ? Chain<TextToNumber>().Chain<NumberToFlag>().Resolve()
                 : Chain<TextToNumber>().Chain<NumberToFlag>().Resolve();
+    }
+
+    public interface IChainProbeService;
+
+    public class ChainProbeService : IChainProbeService;
+
+    private class ServiceToFlag : Junction<IChainProbeService, bool>
+    {
+        public override Task<bool> Run(IChainProbeService input) => Task.FromResult(true);
+    }
+
+    public interface IContainerInputTrain : IServiceTrain<ChainProbeInput, bool>;
+
+    public class ContainerInputTrain : ServiceTrain<ChainProbeInput, bool>, IContainerInputTrain
+    {
+        protected override Task<Either<Exception, bool>> Junctions() =>
+            Chain<ServiceToFlag>().Resolve();
+    }
+
+    public interface ISeedingTrain : IServiceTrain<ChainProbeInput, bool>;
+
+    public class SeedingTrain : ServiceTrain<ChainProbeInput, bool>, ISeedingTrain
+    {
+        protected override Task<Either<Exception, bool>> Junctions() =>
+            AddServices<IChainProbeService>(new ChainProbeService())
+                .Chain<ServiceToFlag>()
+                .Resolve();
+    }
+
+    public interface IAsyncReadsInputTrain : IServiceTrain<ChainProbeInput, bool>;
+
+    public class AsyncReadsInputTrain : ServiceTrain<ChainProbeInput, bool>, IAsyncReadsInputTrain
+    {
+        protected override async Task<Either<Exception, bool>> Junctions() =>
+            TrainInput.Value.Length > 0
+                ? await Chain<TextToNumber>().Chain<NumberToFlag>().Resolve()
+                : await Chain<TextToNumber>().Chain<NumberToFlag>().Resolve();
+    }
+
+    public interface IAwaitingTrain : IServiceTrain<ChainProbeInput, bool>;
+
+    public class AwaitingTrain : ServiceTrain<ChainProbeInput, bool>, IAwaitingTrain
+    {
+        protected override async Task<Either<Exception, bool>> Junctions()
+        {
+            await Task.Yield();
+            return await Chain<TextToNumber>().Chain<NumberToFlag>().Resolve();
+        }
     }
 }
