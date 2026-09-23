@@ -106,6 +106,24 @@ public class DeferredPromotionTests : TestSetup
             );
     }
 
+    [Test]
+    public async Task Deferring_without_a_hook_is_confirmed_immediately()
+    {
+        var result = await Execution.QueueAsync(
+            typeof(IDeferWithoutHookTrain).FullName!,
+            "{\"Value\":\"x\"}"
+        );
+
+        var entry = (await EntryAsync(result.WorkQueueId))!;
+
+        entry
+            .ConfirmedAt.Should()
+            .NotBeNull(
+                "DeferQueuePromotion only has something to wait for when OnQueue is overridden; "
+                    + "staging without a hook would leave an entry nothing ever promotes"
+            );
+    }
+
     // ── opt-in: deferred promotion ──────────────────────────────────
 
     [Test]
@@ -400,6 +418,22 @@ public class DeferredPromotionTests : TestSetup
 
         protected override Task<Either<Exception, Unit>> Junctions() =>
             Task.FromResult<Either<Exception, Unit>>(Unit.Default);
+    }
+
+    public record DeferWithoutHookInput
+    {
+        public string Value { get; init; } = string.Empty;
+    }
+
+    public interface IDeferWithoutHookTrain : IServiceTrain<DeferWithoutHookInput, Unit>;
+
+    public class DeferWithoutHookTrain
+        : ServiceTrain<DeferWithoutHookInput, Unit>,
+            IDeferWithoutHookTrain
+    {
+        protected override bool DeferQueuePromotion => true;
+
+        protected override Task<Either<Exception, Unit>> Junctions() => Task.FromResult(Resolve());
     }
 
     public interface IDeferringTrain : IServiceTrain<DeferInput, Unit>;

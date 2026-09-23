@@ -66,6 +66,42 @@ public class QueueInputTests : TestSetup
     }
 
     [Test]
+    public async Task Whitespace_input_is_read_as_an_empty_object()
+    {
+        var result = await Execution.QueueAsync(typeof(IOptionalInputTrain).FullName!, " \t\r\n ");
+
+        var stored = (await EntryAsync(result.WorkQueueId)).Input;
+
+        stored.Should().NotBeNull("blank input is documented to be read as {}, the same as null");
+        JsonSerializer.Deserialize<OptionalInput>(stored!)!.Label.Should().Be("default");
+    }
+
+    [Test]
+    public async Task A_scheduled_time_in_the_past_is_stored_as_given_and_is_already_due()
+    {
+        var past = DateTime.UtcNow.AddHours(-3);
+
+        var result = await Execution.QueueAsync(
+            typeof(IOptionalInputTrain).FullName!,
+            "{}",
+            scheduledAt: past
+        );
+
+        var entry = await EntryAsync(result.WorkQueueId);
+
+        entry
+            .ScheduledAt.Should()
+            .BeCloseTo(past, TimeSpan.FromSeconds(1), "the enqueue neither refuses nor clamps it");
+        entry
+            .ScheduledAt.Should()
+            .BeOnOrBefore(
+                DateTime.UtcNow,
+                "it is the earliest dispatch time, so a past one is due as soon as a worker is free"
+            );
+        entry.ConfirmedAt.Should().NotBeNull("nothing stages it, so dispatch can claim it now");
+    }
+
+    [Test]
     public async Task A_local_scheduled_time_is_stored_as_utc()
     {
         var local = DateTime.SpecifyKind(DateTime.Now.AddHours(2), DateTimeKind.Local);
