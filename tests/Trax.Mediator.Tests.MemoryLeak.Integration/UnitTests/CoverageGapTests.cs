@@ -175,6 +175,60 @@ public class CoverageGapTests
     }
 
     [Test]
+    public async Task QueueAsync_DeserializeReturnsNull_ThrowsJsonException()
+    {
+        using var provider = (ServiceProvider)BuildProviderWithGapTrains();
+        var execution = provider.GetRequiredService<ITrainExecutionService>();
+
+        // Only a null or blank string is read as {}; the JSON literal null is not blank, so it
+        // reaches the deserializer and is refused there, the same as on RunAsync.
+        var act = async () => await execution.QueueAsync(nameof(IGapTrain), "null");
+
+        await act.Should()
+            .ThrowAsync<System.Text.Json.JsonException>(
+                "a JSON null is an input problem, reported like any other malformed input"
+            )
+            .WithMessage("*deserialized to null*");
+    }
+
+    [Test]
+    public async Task RunAsync_AuthorizedTrain_NoAuthService_UnderATrustedScope_Runs()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddTrax(trax =>
+            trax.AddEffects(effects => effects.UseInMemory())
+                .AddMediator(mediator => mediator.ScanAssemblies(typeof(CoverageGapTests).Assembly))
+        );
+        using var provider = services.BuildServiceProvider();
+        var execution = provider.GetRequiredService<ITrainExecutionService>();
+        var trusted =
+            provider.GetRequiredService<Trax.Mediator.Services.TrustedExecution.ITrustedExecutionScope>();
+
+        var inputJson = JsonSerializer.Serialize(
+            new AuthGapInput { Value = "x" },
+            TraxEffectConfiguration.StaticSystemJsonSerializerOptions
+        );
+        var trainName = typeof(IAuthorizedGapTrain).FullName!;
+
+        using (trusted.BeginTrusted("test.admin-surface"))
+        {
+            var ran = await execution.RunAsync(trainName, inputJson);
+            ran.Output.Should()
+                .BeOfType<GapOutput>("the run went through rather than being refused")
+                .Which.Echo.Should()
+                .Be("x");
+        }
+
+        var outside = async () => await execution.RunAsync(trainName, inputJson);
+        await outside
+            .Should()
+            .ThrowAsync<InvalidOperationException>(
+                "outside the scope the check still fails closed"
+            );
+    }
+
+    [Test]
     public async Task QueueAsync_AuthorizedTrain_NoAuthService_UnderATrustedScope_Queues()
     {
         // Trusted infrastructure was authorized at its own gate: the dashboard's admin surface,
