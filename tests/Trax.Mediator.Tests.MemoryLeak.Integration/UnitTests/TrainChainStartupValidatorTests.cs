@@ -1,6 +1,7 @@
 using FluentAssertions;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Trax.Core.Exceptions;
 using Trax.Core.Junction;
@@ -33,20 +34,26 @@ public class TrainChainStartupValidatorTests
     /// </summary>
     private static Task<Exception?> Start<TService, TTrain>(
         bool skip = false,
-        Action<IServiceCollection>? configure = null
+        Action<IServiceCollection>? configure = null,
+        RecordingLogger? logger = null,
+        Func<IServiceScopeFactory, IServiceScopeFactory>? wrapScopes = null
     )
         where TService : class
         where TTrain : class, TService =>
         StartMany(
             [(typeof(TService), typeof(TTrain), Registration<TService, TTrain>())],
             skip,
-            configure
+            configure,
+            logger,
+            wrapScopes
         );
 
     private static async Task<Exception?> StartMany(
         (Type Service, Type Train, TrainRegistration Registration)[] trains,
         bool skip = false,
-        Action<IServiceCollection>? configure = null
+        Action<IServiceCollection>? configure = null,
+        RecordingLogger? logger = null,
+        Func<IServiceScopeFactory, IServiceScopeFactory>? wrapScopes = null
     )
     {
         var services = new ServiceCollection();
@@ -63,10 +70,13 @@ public class TrainChainStartupValidatorTests
         var discovery = Substitute.For<ITrainDiscoveryService>();
         discovery.DiscoverTrains().Returns(trains.Select(t => t.Registration).ToList());
 
+        var scopes = provider.GetRequiredService<IServiceScopeFactory>();
+
         var validator = new TrainChainStartupValidator(
             discovery,
-            provider.GetRequiredService<IServiceScopeFactory>(),
-            new MediatorConfiguration { SkipChainVerification = skip }
+            wrapScopes?.Invoke(scopes) ?? scopes,
+            new MediatorConfiguration { SkipChainVerification = skip },
+            logger
         );
 
         try
@@ -230,6 +240,106 @@ public class TrainChainStartupValidatorTests
             .And.Contain(nameof(IAwaitingTrain));
     }
 
+    [Test]
+    public async Task Startup_WhenARegisteredServiceIsNotATrain_StartsAndSkipsIt()
+    {
+        var logger = new RecordingLogger();
+
+        var failure = await Start<INotATrain, NotATrain>(logger: logger);
+
+        failure.Should().BeNull("a registered train need not derive from Train<,>");
+        logger
+            .Warnings.Should()
+            .ContainSingle()
+            .Which.Should()
+            .Contain(nameof(INotATrain))
+            .And.Contain("does not derive from Train<TIn, TOut>");
+    }
+
+    [Test]
+    public async Task Startup_WhenJunctionsThrowsSomethingOtherThanADeclarationError_RefusesToStart()
+    {
+        var failure = await Start<IThrowingDeclarationTrain, ThrowingDeclarationTrain>();
+
+        failure.Should().BeOfType<TrainException>();
+        failure!
+            .Message.Should()
+            .Contain($"{nameof(IThrowingDeclarationTrain)}: its chain could not be read (");
+    }
+
+    [Test]
+    public async Task Startup_WhenVerifyingAChainThrows_RefusesToStart()
+    {
+        // BrokenFlowTrain's first junction needs an int that is not in Memory, so the check asks
+        // the container for one, and that question is what throws here.
+        var failure = await Start<IBrokenFlowTrain, BrokenFlowTrain>(
+            wrapScopes: scopes => new ThrowingIsServiceScopeFactory(scopes)
+        );
+
+        failure.Should().BeOfType<TrainException>();
+        failure!
+            .Message.Should()
+            .Contain(
+                $"{nameof(IBrokenFlowTrain)}: its chain could not be verified "
+                    + $"({ThrowingIsService.Reason})"
+            );
+    }
+
+    /// <summary>Keeps the warnings the validator logs, so a skip can be told from a pass.</summary>
+    public sealed class RecordingLogger : ILogger<TrainChainStartupValidator>
+    {
+        public List<string> Warnings { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter
+        )
+        {
+            if (logLevel == LogLevel.Warning)
+                Warnings.Add(formatter(state, exception));
+        }
+    }
+
+    /// <summary>
+    /// Hands the validator scopes whose container answers "is this a service?" by throwing, the
+    /// only way <c>ChainVerification.Verify</c> itself can fail on a well-formed chain.
+    /// </summary>
+    private sealed class ThrowingIsServiceScopeFactory(IServiceScopeFactory inner)
+        : IServiceScopeFactory
+    {
+        public IServiceScope CreateScope() => new Scope(inner.CreateScope());
+
+        private sealed class Scope(IServiceScope inner) : IServiceScope
+        {
+            public IServiceProvider ServiceProvider { get; } = new Provider(inner.ServiceProvider);
+
+            public void Dispose() => inner.Dispose();
+        }
+
+        private sealed class Provider(IServiceProvider inner) : IServiceProvider
+        {
+            public object? GetService(Type serviceType) =>
+                serviceType == typeof(IServiceProviderIsService)
+                    ? new ThrowingIsService()
+                    : inner.GetService(serviceType);
+        }
+    }
+
+    private sealed class ThrowingIsService : IServiceProviderIsService
+    {
+        public const string Reason = "the container could not answer";
+
+        public bool IsService(Type serviceType) => throw new InvalidOperationException(Reason);
+    }
+
     /// <summary>
     /// A dedicated input type. These trains are discovered by assembly scan like any other, so a
     /// shared input type such as string would register a train for it and change what other
@@ -320,6 +430,23 @@ public class TrainChainStartupValidatorTests
             await Task.Yield();
             return await Chain<TextToNumber>().Chain<NumberToFlag>().Resolve();
         }
+    }
+
+    public interface INotATrain;
+
+    public class NotATrain : INotATrain;
+
+    public interface IThrowingDeclarationTrain : IServiceTrain<ChainProbeInput, bool>;
+
+    public class ThrowingDeclarationTrain
+        : ServiceTrain<ChainProbeInput, bool>,
+            IThrowingDeclarationTrain
+    {
+        public const string Reason = "the declaration itself failed";
+
+        // Throws synchronously, before any chain is recorded, and not as a ChainDeclarationException.
+        protected override Task<Either<Exception, bool>> Junctions() =>
+            throw new InvalidOperationException(Reason);
     }
 
     public interface IRequestOnlyService;
