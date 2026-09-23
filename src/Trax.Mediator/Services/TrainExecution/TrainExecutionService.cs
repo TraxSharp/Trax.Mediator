@@ -547,9 +547,11 @@ public class TrainExecutionService(
             TraxEffectConfiguration.StaticSystemJsonSerializerOptions
         );
 
+        // A JSON null is well-formed but is not an input, so it is reported the way any other
+        // input the train cannot use is: as a JSON problem the caller can fix.
         if (input is null)
-            throw new InvalidOperationException(
-                $"Deserialization returned null. Ensure the input matches {registration.InputTypeName}."
+            throw new JsonException(
+                $"InputJson deserialized to null. Expected an instance of {registration.InputTypeName}."
             );
 
         return input;

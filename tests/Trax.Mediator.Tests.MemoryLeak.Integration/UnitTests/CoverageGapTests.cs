@@ -158,7 +158,7 @@ public class CoverageGapTests
     }
 
     [Test]
-    public async Task RunAsync_DeserializeReturnsNull_ThrowsInvalidOperation()
+    public async Task RunAsync_DeserializeReturnsNull_ThrowsJsonException()
     {
         using var provider = (ServiceProvider)BuildProviderWithGapTrains();
         var execution = provider.GetRequiredService<ITrainExecutionService>();
@@ -167,7 +167,11 @@ public class CoverageGapTests
         // null-check after JsonSerializer.Deserialize in DeserializeInput.
         var act = async () => await execution.RunAsync(nameof(IGapTrain), "null");
 
-        await act.Should().ThrowAsync<InvalidOperationException>();
+        await act.Should()
+            .ThrowAsync<System.Text.Json.JsonException>(
+                "a JSON null is an input problem, reported like any other malformed input"
+            )
+            .WithMessage("*deserialized to null*");
     }
 
     [Test]
