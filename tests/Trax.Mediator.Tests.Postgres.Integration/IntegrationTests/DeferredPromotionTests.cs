@@ -308,6 +308,21 @@ public class DeferredPromotionTests : TestSetup
     }
 
     [Test]
+    public async Task An_entry_promoted_elsewhere_while_its_hook_ran_is_a_successful_enqueue()
+    {
+        var result = await Execution.QueueAsync(
+            typeof(IDeferringPromotedElsewhereTrain).FullName!,
+            "{\"Value\":\"x\"}"
+        );
+
+        (await EntryAsync(result.WorkQueueId))!
+            .ConfirmedAt.Should()
+            .NotBeNull(
+                "a promoting sweep confirmed it, so it will run and the enqueue did not fail"
+            );
+    }
+
+    [Test]
     public async Task A_hook_that_throws_after_its_entry_was_promoted_leaves_the_entry_alone()
     {
         var act = async () =>
@@ -524,6 +539,31 @@ public class DeferredPromotionTests : TestSetup
                 .ExecuteUpdateAsync(u => u.SetProperty(w => w.ConfirmedAt, DateTime.UtcNow), ct);
 
             throw new InvalidOperationException("hook failed after promotion");
+        }
+
+        protected override Task<Either<Exception, Unit>> Junctions() => Task.FromResult(Resolve());
+    }
+
+    public record PromotedElsewhereInput
+    {
+        public string Value { get; init; } = string.Empty;
+    }
+
+    public interface IDeferringPromotedElsewhereTrain : IServiceTrain<PromotedElsewhereInput, Unit>;
+
+    public class DeferringPromotedElsewhereTrain(IDataContextProviderFactory factory)
+        : ServiceTrain<PromotedElsewhereInput, Unit>,
+            IDeferringPromotedElsewhereTrain
+    {
+        protected override bool DeferQueuePromotion => true;
+
+        // What an opted-in promoting sweep does to a slow hook's entry; the hook then succeeds.
+        protected override async Task OnQueue(Metadata metadata, CancellationToken ct)
+        {
+            using var context = await factory.CreateDbContextAsync(ct);
+            await context
+                .WorkQueues.Where(w => w.ExternalId == metadata.ExternalId)
+                .ExecuteUpdateAsync(u => u.SetProperty(w => w.ConfirmedAt, DateTime.UtcNow), ct);
         }
 
         protected override Task<Either<Exception, Unit>> Junctions() => Task.FromResult(Resolve());

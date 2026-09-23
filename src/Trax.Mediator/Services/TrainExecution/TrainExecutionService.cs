@@ -343,7 +343,10 @@ public class TrainExecutionService(
         // operator cancelled it, or the stale-entry sweep resolved it because the hook outlived
         // StaleStagedEntryTimeout. The hook's side-effect may have landed but the work will not
         // run, and reporting success would say otherwise.
-        if (!await promotion.PromoteAsync(entry.Id, CancellationToken.None))
+        if (
+            !await promotion.PromoteAsync(entry.Id, CancellationToken.None)
+            && !await WasConfirmedElsewhereAsync(entry.Id)
+        )
             throw new InvalidOperationException(
                 $"Work queue entry {entry.Id} for {registration.ServiceTypeName} was cancelled "
                     + "before its OnQueue hook returned, so it will not run. The hook's "
@@ -351,6 +354,26 @@ public class TrainExecutionService(
             );
 
         return new QueueTrainResult(entry.Id, entry.ExternalId);
+    }
+
+    /// <summary>
+    /// Whether an entry this enqueue could not promote was confirmed by something else, which
+    /// a host that opted into promoting stale entries does when a hook outlives the timeout. Such
+    /// an entry will run, so the enqueue succeeded.
+    /// </summary>
+    private async Task<bool> WasConfirmedElsewhereAsync(long workQueueId)
+    {
+        using var context = await dataContextFactory.CreateDbContextAsync(CancellationToken.None);
+
+        return await context
+            .WorkQueues.AsNoTracking()
+            .AnyAsync(
+                w =>
+                    w.Id == workQueueId
+                    && w.ConfirmedAt != null
+                    && w.Status != WorkQueueStatus.Cancelled,
+                CancellationToken.None
+            );
     }
 
     /// <summary>
