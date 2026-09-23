@@ -2,10 +2,15 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Trax.Core.Extensions;
 using Trax.Effect.Configuration.TraxEffectConfiguration;
+using Trax.Effect.Data.Services.DataContext;
+using Trax.Effect.Data.Services.DataContextTransaction;
+using Trax.Effect.Data.Services.EnqueueContext;
 using Trax.Effect.Data.Services.IDataContextFactory;
+using Trax.Effect.Data.Services.WorkQueuePromotion;
 using Trax.Effect.Models.Metadata;
 using Trax.Effect.Models.Metadata.DTOs;
 using Trax.Effect.Models.WorkQueue;
@@ -38,6 +43,13 @@ public class TrainExecutionService(
     /// </summary>
     private static readonly ConcurrentDictionary<Type, MethodInfo?> OnQueueOverrideCache = new();
 
+    /// <summary>
+    /// Per-train-type cache of the concrete train's <c>DeferQueuePromotion</c> property. Only read
+    /// for trains that actually override <c>OnQueue</c> — deferring promotion without a hook would
+    /// stage an entry with nothing to wait for.
+    /// </summary>
+    private static readonly ConcurrentDictionary<Type, PropertyInfo?> DeferPromotionCache = new();
+
     public async Task<QueueTrainResult> QueueAsync(
         string trainName,
         string inputJson,
@@ -58,6 +70,8 @@ public class TrainExecutionService(
             TraxJsonSerializationOptions.ManifestProperties
         );
 
+        var deferPromotion = ResolveDeferPromotion(registration);
+
         var entry = WorkQueue.Create(
             new CreateWorkQueue
             {
@@ -65,18 +79,50 @@ public class TrainExecutionService(
                 Input = serializedInput,
                 InputTypeName = registration.InputType.FullName,
                 Priority = priority,
+                DeferPromotion = deferPromotion,
             }
         );
+
+        if (deferPromotion)
+            return await QueueWithDeferredPromotionAsync(registration, input, entry, ct);
+
+        using var dataContext = await dataContextFactory.CreateDbContextAsync(ct);
 
         // Queue-time hook: fire OnQueue before the work queue row is inserted, so a consumer
         // can perform a side-effect (e.g. an optimistic shadow write) the moment the mutation
         // is accepted. The entry's ExternalId is the correlation key — the eventual run executes
         // under the same ExternalId. Exceptions propagate and abort the enqueue.
-        await InvokeQueueHookAsync(registration, input, entry.ExternalId, ct);
+        //
+        // Track() is change-tracking only, so the row still has not been INSERTed when the hook
+        // runs. Tracking it first lets the hook's own writes join the same SaveChanges, and the
+        // transaction below makes the pair atomic: a hook that throws after writing leaves
+        // nothing behind, which is the crash window this path used to carry. A hook that writes
+        // through its OWN DbContext is not covered — a separately-pooled context has its own
+        // connection and therefore its own transaction.
+        var transaction = await TryBeginTransactionAsync(dataContext, ct);
+        try
+        {
+            await dataContext.Track(entry);
 
-        using var dataContext = await dataContextFactory.CreateDbContextAsync(ct);
-        await dataContext.Track(entry);
-        await dataContext.SaveChanges(ct);
+            // Resolved rather than injected so the public constructor signature is unchanged —
+            // adding a parameter to a public service type is a breaking API change for anyone
+            // constructing it directly.
+            var enqueueContext = serviceProvider.GetRequiredService<IEnqueueContextAccessor>();
+
+            using (enqueueContext.Enter(dataContext))
+                await InvokeQueueHookAsync(registration, input, entry.ExternalId, ct);
+
+            await dataContext.SaveChanges(ct);
+
+            if (transaction is not null)
+                await transaction.Commit();
+        }
+        catch
+        {
+            if (transaction is not null)
+                await transaction.Rollback();
+            throw;
+        }
 
         return new QueueTrainResult(entry.Id, entry.ExternalId);
     }
@@ -105,6 +151,108 @@ public class TrainExecutionService(
             registration.OutputType,
             ct
         );
+    }
+
+    /// <summary>
+    /// The two-phase enqueue, used when a train defers promotion: commit the entry unconfirmed,
+    /// run the hook, then promote in a second commit.
+    /// </summary>
+    /// <remarks>
+    /// The phases are deliberately separate commits. A hook whose side-effect lives in another
+    /// database cannot join Trax's transaction, so the pair cannot be made atomic — but staging the
+    /// entry first means a crash between the two leaves an unconfirmed entry that
+    /// <c>IWorkQueuePromotion.PromoteStaleAsync</c> can recover, instead of a side-effect that
+    /// nothing will ever consume.
+    ///
+    /// A hook that <em>throws</em> still aborts the enqueue outright: the staged entry is removed,
+    /// so the observable contract is unchanged.
+    /// </remarks>
+    private async Task<QueueTrainResult> QueueWithDeferredPromotionAsync(
+        TrainRegistration registration,
+        object input,
+        WorkQueue entry,
+        CancellationToken ct
+    )
+    {
+        using (var stagingContext = await dataContextFactory.CreateDbContextAsync(ct))
+        {
+            await stagingContext.Track(entry);
+            await stagingContext.SaveChanges(ct);
+        }
+
+        try
+        {
+            await InvokeQueueHookAsync(registration, input, entry.ExternalId, ct);
+        }
+        catch
+        {
+            await RemoveStagedEntryAsync(entry.Id, ct);
+            throw;
+        }
+
+        var promotion = serviceProvider.GetRequiredService<IWorkQueuePromotion>();
+        await promotion.PromoteAsync(entry.Id, ct);
+
+        return new QueueTrainResult(entry.Id, entry.ExternalId);
+    }
+
+    /// <summary>
+    /// Removes an entry staged for a hook that then threw, so a rejected mutation leaves no trace.
+    /// </summary>
+    private async Task RemoveStagedEntryAsync(long workQueueId, CancellationToken ct)
+    {
+        using var context = await dataContextFactory.CreateDbContextAsync(ct);
+        await context.WorkQueues.Where(w => w.Id == workQueueId).ExecuteDeleteAsync(ct);
+    }
+
+    /// <summary>
+    /// Whether this train holds its queue entry unconfirmed until <c>OnQueue</c> has committed.
+    /// False for every train that does not override the hook, so the common path is untouched.
+    /// </summary>
+    private bool ResolveDeferPromotion(TrainRegistration registration)
+    {
+        if (ResolveOnQueueOverride(registration.ImplementationType) is null)
+            return false;
+
+        var property = DeferPromotionCache.GetOrAdd(
+            registration.ImplementationType,
+            static type =>
+                type.GetProperty(
+                    "DeferQueuePromotion",
+                    BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public
+                )
+        );
+
+        if (property is null)
+            return false;
+
+        var train = serviceProvider.GetRequiredService(registration.ServiceType);
+        return property.GetValue(train) is true;
+    }
+
+    /// <summary>
+    /// Begins a transaction for the enqueue, or returns null when the configured provider does not
+    /// support one (the in-memory provider, used widely in tests, does not). A null transaction
+    /// degrades to the previous behaviour — the queue row and any ambient-context write still share
+    /// one <c>SaveChanges</c>, they are simply not wrapped in an explicit transaction.
+    /// </summary>
+    private static async Task<IDataContextTransaction?> TryBeginTransactionAsync(
+        IDataContext dataContext,
+        CancellationToken ct
+    )
+    {
+        try
+        {
+            return await dataContext.BeginTransaction(ct);
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+        catch (NotSupportedException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
