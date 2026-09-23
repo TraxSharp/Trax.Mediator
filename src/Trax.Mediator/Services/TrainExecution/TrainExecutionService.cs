@@ -59,23 +59,34 @@ public class TrainExecutionService(
 
     public async Task<QueueTrainResult> QueueAsync(
         string trainName,
-        string inputJson,
+        string? inputJson,
         int priority = 0,
+        DateTime? scheduledAt = null,
         CancellationToken ct = default
     )
     {
         var registration = FindTrain(trainName);
         await AuthorizeAsync(registration, ct);
-        EnforceInputSizeCap(inputJson, registration);
-        var input = DeserializeInput(inputJson, registration);
 
         registration.ServiceType.FullName.AssertLoaded();
 
-        var serializedInput = JsonSerializer.Serialize(
-            input,
-            registration.InputType,
-            TraxJsonSerializationOptions.ManifestProperties
-        );
+        // No input at all is a real case — an entry can be queued for a train whose input the
+        // dispatcher will supply, and it is stored as null rather than as a default instance so
+        // that "nothing was given" stays distinguishable from "an empty object was given".
+        object? input = null;
+        string? serializedInput = null;
+
+        if (!string.IsNullOrWhiteSpace(inputJson))
+        {
+            EnforceInputSizeCap(inputJson, registration);
+            input = DeserializeInput(inputJson, registration);
+
+            serializedInput = JsonSerializer.Serialize(
+                input,
+                registration.InputType,
+                TraxJsonSerializationOptions.ManifestProperties
+            );
+        }
 
         var deferPromotion = ResolveDeferPromotion(registration);
 
@@ -86,11 +97,14 @@ public class TrainExecutionService(
                 Input = serializedInput,
                 InputTypeName = registration.InputType.FullName,
                 Priority = priority,
+                ScheduledAt = scheduledAt,
                 DeferPromotion = deferPromotion,
             }
         );
 
-        entry.SubjectKey = ResolveSubjectKey(registration, input, entry.ExternalId);
+        entry.SubjectKey = input is null
+            ? null
+            : ResolveSubjectKey(registration, input, entry.ExternalId);
 
         if (deferPromotion)
             return await QueueWithDeferredPromotionAsync(registration, input, entry, ct);

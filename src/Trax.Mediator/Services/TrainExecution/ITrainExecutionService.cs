@@ -11,14 +11,16 @@ public interface ITrainExecutionService
     /// The scheduler picks it up and dispatches it on its own machine.
     /// </summary>
     /// <param name="trainName">The fully qualified service type name of the train.</param>
-    /// <param name="inputJson">JSON-serialized input for the train.</param>
+    /// <param name="inputJson">JSON-serialized input for the train, or null when the entry carries none.</param>
     /// <param name="priority">Dispatch priority (0–31, higher runs first).</param>
+    /// <param name="scheduledAt">Earliest time the entry may be dispatched. Null dispatches as soon as a worker is free.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The created WorkQueue entry's ID and external ID.</returns>
     Task<QueueTrainResult> QueueAsync(
         string trainName,
-        string inputJson,
+        string? inputJson,
         int priority = 0,
+        DateTime? scheduledAt = null,
         CancellationToken ct = default
     );
 
