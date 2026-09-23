@@ -286,6 +286,43 @@ public class DeferredPromotionTests : TestSetup
             .BeFalse("the entry is already committed, so there is no transaction to join");
     }
 
+    [Test]
+    public async Task An_entry_cancelled_while_its_hook_ran_makes_the_enqueue_fail()
+    {
+        var act = async () =>
+            await Execution.QueueAsync(
+                typeof(IDeferringSelfCancelTrain).FullName!,
+                "{\"Value\":\"x\"}"
+            );
+
+        (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage(
+            "*cancelled before its OnQueue hook returned*",
+            "reporting success for work that will not run would be false"
+        );
+    }
+
+    [Test]
+    public async Task A_hook_that_throws_after_its_entry_was_promoted_leaves_the_entry_alone()
+    {
+        var act = async () =>
+            await Execution.QueueAsync(
+                typeof(IDeferringPromotedThenThrowsTrain).FullName!,
+                "{\"Value\":\"x\"}"
+            );
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*after promotion*");
+
+        var factory = Scope.ServiceProvider.GetRequiredService<IDataContextProviderFactory>();
+        using var context = await factory.CreateDbContextAsync(CancellationToken.None);
+        (await context.WorkQueues.CountAsync(w => w.TrainName!.Contains("PromotedThenThrowsTrain")))
+            .Should()
+            .Be(
+                1,
+                "an entry that is no longer staged may already be running; deleting it would "
+                    + "orphan the run and free its subject"
+            );
+    }
+
     // ── probes ──────────────────────────────────────────────────────
 
     /// <summary>What a hook saw about its own entry while it was running.</summary>
@@ -425,6 +462,62 @@ public class DeferredPromotionTests : TestSetup
             Observed.CancelCallerDuringHook?.Cancel();
             ct.ThrowIfCancellationRequested();
             return Task.CompletedTask;
+        }
+
+        protected override Task<Either<Exception, Unit>> Junctions() => Task.FromResult(Resolve());
+    }
+
+    public record SelfCancelInput
+    {
+        public string Value { get; init; } = string.Empty;
+    }
+
+    public record PromotedThenThrowsInput
+    {
+        public string Value { get; init; } = string.Empty;
+    }
+
+    public interface IDeferringSelfCancelTrain : IServiceTrain<SelfCancelInput, Unit>;
+
+    public class DeferringSelfCancelTrain(IDataContextProviderFactory factory)
+        : ServiceTrain<SelfCancelInput, Unit>,
+            IDeferringSelfCancelTrain
+    {
+        protected override bool DeferQueuePromotion => true;
+
+        // What an operator, or the stale-entry sweep, does while a slow hook is still running.
+        protected override async Task OnQueue(Metadata metadata, CancellationToken ct)
+        {
+            using var context = await factory.CreateDbContextAsync(ct);
+            await context
+                .WorkQueues.Where(w => w.ExternalId == metadata.ExternalId)
+                .ExecuteUpdateAsync(
+                    u => u.SetProperty(w => w.Status, WorkQueueStatus.Cancelled),
+                    ct
+                );
+        }
+
+        protected override Task<Either<Exception, Unit>> Junctions() => Task.FromResult(Resolve());
+    }
+
+    public interface IDeferringPromotedThenThrowsTrain
+        : IServiceTrain<PromotedThenThrowsInput, Unit>;
+
+    public class DeferringPromotedThenThrowsTrain(IDataContextProviderFactory factory)
+        : ServiceTrain<PromotedThenThrowsInput, Unit>,
+            IDeferringPromotedThenThrowsTrain
+    {
+        protected override bool DeferQueuePromotion => true;
+
+        // What an opted-in promoting sweep does to a slow hook's entry, before the hook fails.
+        protected override async Task OnQueue(Metadata metadata, CancellationToken ct)
+        {
+            using var context = await factory.CreateDbContextAsync(ct);
+            await context
+                .WorkQueues.Where(w => w.ExternalId == metadata.ExternalId)
+                .ExecuteUpdateAsync(u => u.SetProperty(w => w.ConfirmedAt, DateTime.UtcNow), ct);
+
+            throw new InvalidOperationException("hook failed after promotion");
         }
 
         protected override Task<Either<Exception, Unit>> Junctions() => Task.FromResult(Resolve());

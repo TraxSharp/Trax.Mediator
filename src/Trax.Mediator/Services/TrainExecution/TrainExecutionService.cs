@@ -11,6 +11,7 @@ using Trax.Effect.Data.Services.DataContextTransaction;
 using Trax.Effect.Data.Services.EnqueueContext;
 using Trax.Effect.Data.Services.IDataContextFactory;
 using Trax.Effect.Data.Services.WorkQueuePromotion;
+using Trax.Effect.Enums;
 using Trax.Effect.Models.Metadata;
 using Trax.Effect.Models.Metadata.DTOs;
 using Trax.Effect.Models.WorkQueue;
@@ -117,12 +118,15 @@ public class TrainExecutionService(
         // nothing behind, which is the crash window this path used to carry. A hook that writes
         // through its OWN DbContext is not covered: a separately-pooled context has its own
         // connection and therefore its own transaction.
-        var transaction = await TryBeginTransactionAsync(dataContext, ct);
+        // Only a train with a hook needs the transaction: without one there is a single write,
+        // and an explicit BEGIN/COMMIT would add two round trips to every enqueue for nothing.
+        var hasHook = ResolveOnQueueOverride(registration.ImplementationType) is not null;
+        var transaction = hasHook ? await TryBeginTransactionAsync(dataContext, ct) : null;
         try
         {
             await dataContext.Track(entry);
 
-            if (ResolveOnQueueOverride(registration.ImplementationType) is not null)
+            if (hasHook)
             {
                 // Resolved rather than injected so the public constructor signature is
                 // unchanged: adding a parameter to a public service type is a breaking API
@@ -310,11 +314,22 @@ public class TrainExecutionService(
         {
             await InvokeQueueHookAsync(registration, input, entry.ExternalId, ct);
         }
-        catch
+        catch (Exception hookFailure)
         {
             // Not the caller's token: a caller that gave up is the likeliest reason the hook
             // threw, and a staged entry left behind would be a rejected mutation still waiting.
-            await RemoveStagedEntryAsync(entry.Id);
+            // A failure to remove it must not hide why the enqueue failed; the stale-entry sweep
+            // resolves an entry left behind.
+            try
+            {
+                await RemoveStagedEntryAsync(entry.Id);
+            }
+            catch
+            {
+                // The hook's exception is the one the caller needs.
+            }
+
+            ExceptionDispatchInfo.Throw(hookFailure);
             throw;
         }
 
@@ -322,7 +337,17 @@ public class TrainExecutionService(
         // landed. Confirming the entry is the other half of that, so it does not take the
         // caller's token either; see effect/0005 for the same reasoning on a run's outcome.
         var promotion = serviceProvider.GetRequiredService<IWorkQueuePromotion>();
-        await promotion.PromoteAsync(entry.Id, CancellationToken.None);
+
+        // False means the entry stopped being a staged, queued entry while the hook ran: an
+        // operator cancelled it, or the stale-entry sweep resolved it because the hook outlived
+        // StaleStagedEntryTimeout. The hook's side-effect may have landed but the work will not
+        // run, and reporting success would say otherwise.
+        if (!await promotion.PromoteAsync(entry.Id, CancellationToken.None))
+            throw new InvalidOperationException(
+                $"Work queue entry {entry.Id} for {registration.ServiceTypeName} was cancelled "
+                    + "before its OnQueue hook returned, so it will not run. The hook's "
+                    + "side-effect may already have been applied."
+            );
 
         return new QueueTrainResult(entry.Id, entry.ExternalId);
     }
@@ -334,11 +359,19 @@ public class TrainExecutionService(
     {
         using var context = await dataContextFactory.CreateDbContextAsync(CancellationToken.None);
 
+        // Only an entry that is still staged. One the sweep promoted may already be dispatched
+        // and running, and deleting it would orphan the run and free its subject.
         if (context is DbContext db && !db.Database.IsRelational())
         {
             // The in-memory provider does not translate ExecuteDelete.
             var staged = await db.Set<WorkQueue>()
-                .FirstOrDefaultAsync(w => w.Id == workQueueId, CancellationToken.None);
+                .FirstOrDefaultAsync(
+                    w =>
+                        w.Id == workQueueId
+                        && w.ConfirmedAt == null
+                        && w.Status == WorkQueueStatus.Queued,
+                    CancellationToken.None
+                );
 
             if (staged is not null)
             {
@@ -350,7 +383,9 @@ public class TrainExecutionService(
         }
 
         await context
-            .WorkQueues.Where(w => w.Id == workQueueId)
+            .WorkQueues.Where(w =>
+                w.Id == workQueueId && w.ConfirmedAt == null && w.Status == WorkQueueStatus.Queued
+            )
             .ExecuteDeleteAsync(CancellationToken.None);
     }
 
