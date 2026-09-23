@@ -40,7 +40,10 @@ public interface ITrainBus
     /// </summary>
     /// <typeparam name="TOut">The expected output type of the train.</typeparam>
     /// <param name="trainInput">The input object for the train.</param>
-    /// <param name="metadata">Optional metadata to associate with the train execution.</param>
+    /// <param name="metadata">
+    /// A pre-created, <c>Pending</c> metadata record for the train to run as, or null for the train
+    /// to create its own. See the remarks.
+    /// </param>
     /// <returns>A task that resolves to the train's output.</returns>
     /// <remarks>
     /// This method dynamically discovers and executes the appropriate train based on the
@@ -63,7 +66,11 @@ public interface ITrainBus
     /// <typeparam name="TOut">The expected output type of the train.</typeparam>
     /// <param name="trainInput">The input object for the train.</param>
     /// <param name="cancellationToken">Token to monitor for cancellation requests.</param>
-    /// <param name="metadata">Optional metadata to associate with the train execution.</param>
+    /// <param name="metadata">
+    /// A pre-created, <c>Pending</c> metadata record for the train to run as, or null for the train
+    /// to create its own. It is not a parent link: any other state, including a running train's
+    /// metadata, is refused with a TrainException. See <see cref="RunAsync{TOut}(object, Metadata?)"/>.
+    /// </param>
     /// <returns>A task that resolves to the train's output.</returns>
     public Task<TOut> RunAsync<TOut>(
         object trainInput,
@@ -75,7 +82,11 @@ public interface ITrainBus
     /// Executes a train that accepts the specified input type, discarding the output.
     /// </summary>
     /// <param name="trainInput">The input object for the train.</param>
-    /// <param name="metadata">Optional metadata to associate with the train execution.</param>
+    /// <param name="metadata">
+    /// A pre-created, <c>Pending</c> metadata record for the train to run as, or null for the train
+    /// to create its own. It is not a parent link: any other state, including a running train's
+    /// metadata, is refused with a TrainException. See <see cref="RunAsync{TOut}(object, Metadata?)"/>.
+    /// </param>
     public Task RunAsync(object trainInput, Metadata? metadata = null);
 
     /// <summary>
@@ -83,7 +94,11 @@ public interface ITrainBus
     /// </summary>
     /// <param name="trainInput">The input object for the train.</param>
     /// <param name="cancellationToken">Token to monitor for cancellation requests.</param>
-    /// <param name="metadata">Optional metadata to associate with the train execution.</param>
+    /// <param name="metadata">
+    /// A pre-created, <c>Pending</c> metadata record for the train to run as, or null for the train
+    /// to create its own. It is not a parent link: any other state, including a running train's
+    /// metadata, is refused with a TrainException. See <see cref="RunAsync{TOut}(object, Metadata?)"/>.
+    /// </param>
     public Task RunAsync(
         object trainInput,
         CancellationToken cancellationToken,
