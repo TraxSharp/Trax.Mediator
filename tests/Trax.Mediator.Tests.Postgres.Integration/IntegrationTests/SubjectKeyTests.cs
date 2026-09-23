@@ -141,7 +141,8 @@ public class SubjectKeyTests : TestSetup
     [Test]
     public async Task A_key_at_the_limit_is_accepted_and_claimable_by_the_index()
     {
-        ConfigurableKeyTrain.Key = new string('\u00e9', 512);
+        // Three bytes each in UTF-8, the most a single UTF-16 unit can take.
+        ConfigurableKeyTrain.Key = new string('\u4e2d', 512);
 
         var result = await Execution.QueueAsync(typeof(IConfigurableKeyTrain).FullName!, "{}");
 
