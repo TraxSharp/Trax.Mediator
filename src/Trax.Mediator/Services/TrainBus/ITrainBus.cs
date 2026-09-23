@@ -47,10 +47,10 @@ public interface ITrainBus
     /// type of the input object. The train must be registered with the train registry
     /// and must return the specified output type.
     ///
-    /// If metadata is provided, it will be associated with the train execution, which can
-    /// be useful for tracking, logging, and debugging purposes. The metadata's ID will be set
-    /// as the ParentId of the train, establishing a parent-child relationship between
-    /// train executions.
+    /// If metadata is provided, the train runs as that metadata instead of creating its own: it
+    /// must be a pre-created record in the <c>Pending</c> state, as the scheduler and the
+    /// dashboard's ad-hoc run create, and anything else is refused with a TrainException. It
+    /// does not make the new run a child of another; passing a running train's metadata throws.
     ///
     /// If no train is found that can handle the specified input type, a TrainException
     /// will be thrown.
