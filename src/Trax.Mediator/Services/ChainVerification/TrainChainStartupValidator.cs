@@ -54,7 +54,17 @@ internal sealed class TrainChainStartupValidator(
 
         foreach (var registration in discoveryService.DiscoverTrains())
         {
-            var problem = Check(scope.ServiceProvider, registration);
+            var problem = Check(scope.ServiceProvider, registration, out var skipped);
+
+            if (skipped is not null)
+            {
+                logger?.LogWarning(
+                    "The chain of {TrainName} was not verified at startup: {Reason}",
+                    registration.ServiceTypeName,
+                    skipped
+                );
+                continue;
+            }
 
             checkedTrains++;
 
@@ -77,8 +87,19 @@ internal sealed class TrainChainStartupValidator(
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-    private static string? Check(IServiceProvider services, TrainRegistration registration)
+    /// <summary>
+    /// Returns what is wrong with a train's chain, or null. <paramref name="skipped"/> says why
+    /// a train's chain could not be read at all, which is reported as a warning rather than a
+    /// refusal: the check exists to find chains that cannot run, and an unreadable train is not
+    /// evidence of one.
+    /// </summary>
+    private static string? Check(
+        IServiceProvider services,
+        TrainRegistration registration,
+        out string? skipped
+    )
     {
+        skipped = null;
         object train;
 
         try
@@ -87,21 +108,31 @@ internal sealed class TrainChainStartupValidator(
         }
         catch (Exception ex)
         {
-            return $"{registration.ServiceTypeName}: could not be constructed, so its chain "
-                + $"could not be read ({ex.Message})";
+            // A train whose constructor needs something only a request provides, a current user
+            // read from HttpContext say, cannot be built at boot and still runs fine. Refusing
+            // to start over it would make the upgrade that adds this check break such hosts.
+            skipped = $"it could not be constructed outside a request ({ex.Message})";
+            return null;
+        }
+
+        // DeclaredChain is public on Train<,>, but the registration hands back the service
+        // interface, so the concrete method is reached by name. A registered train need not
+        // derive from Train<,>; one that does not has no chain to read.
+        var declaredChain = train
+            .GetType()
+            .GetMethod(nameof(Core.Train.Train<,>.DeclaredChain), Type.EmptyTypes);
+
+        if (declaredChain is null)
+        {
+            skipped = $"{train.GetType().Name} does not derive from Train<TIn, TOut>";
+            return null;
         }
 
         ChainRecorder chain;
 
         try
         {
-            // DeclaredChain is public on Train<,>, but the registration hands back the service
-            // interface, so the concrete method is reached by name.
-            chain = (ChainRecorder)
-                train
-                    .GetType()
-                    .GetMethod(nameof(Core.Train.Train<,>.DeclaredChain))!
-                    .Invoke(train, null)!;
+            chain = (ChainRecorder)declaredChain.Invoke(train, null)!;
         }
         catch (Exception ex) when (ex.InnerException is ChainDeclarationException declaration)
         {

@@ -188,6 +188,21 @@ public class TrainChainStartupValidatorTests
     }
 
     [Test]
+    public async Task Startup_WhenATrainCanOnlyBeBuiltInsideARequest_StartsAndSkipsIt() =>
+        (
+            await Start<IRequestBoundTrain, RequestBoundTrain>(configure: services =>
+                services.AddScoped<IRequestOnlyService>(_ =>
+                    throw new InvalidOperationException("no HttpContext outside a request")
+                )
+            )
+        )
+            .Should()
+            .BeNull(
+                "a train that cannot be built at boot is not evidence of a chain that cannot run, "
+                    + "and refusing to start over it would break hosts that ran fine before"
+            );
+
+    [Test]
     public async Task Startup_WhenSeveralTrainsCannotRun_ReportsEveryOne()
     {
         var failure = await StartMany([
@@ -305,5 +320,19 @@ public class TrainChainStartupValidatorTests
             await Task.Yield();
             return await Chain<TextToNumber>().Chain<NumberToFlag>().Resolve();
         }
+    }
+
+    public interface IRequestOnlyService;
+
+    public interface IRequestBoundTrain : IServiceTrain<ChainProbeInput, bool>;
+
+    public class RequestBoundTrain(IRequestOnlyService requestOnly)
+        : ServiceTrain<ChainProbeInput, bool>,
+            IRequestBoundTrain
+    {
+        public IRequestOnlyService RequestOnly { get; } = requestOnly;
+
+        protected override Task<Either<Exception, bool>> Junctions() =>
+            Chain<TextToNumber>().Chain<NumberToFlag>().Resolve();
     }
 }

@@ -107,10 +107,33 @@ public class QueueHookTransactionTests : TestSetup
             .Should()
             .Be(
                 0,
-                "the hook's write and the queue row share one transaction, so the hook aborting "
-                    + "must leave nothing behind — this is the crash window the change closes"
+                "a write the hook only tracked is never saved when the hook aborts; the flushed "
+                    + "case, which needs the transaction, is the test below"
             );
         (await CountEnqueuedAsync()).Should().Be(0, "a throwing hook aborts the enqueue");
+    }
+
+    [Test]
+    public async Task Throwing_hook_rolls_back_a_write_it_had_already_flushed()
+    {
+        var act = async () =>
+            await Execution.QueueAsync(
+                typeof(IAmbientFlushThenThrowTrain).FullName!,
+                "{\"Value\":\"flushed\"}"
+            );
+
+        (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage(
+            "*after flushing*"
+        );
+
+        (await CountMarkersAsync())
+            .Should()
+            .Be(
+                0,
+                "the hook saved on the enqueue's context before throwing, so only the enqueue "
+                    + "transaction's rollback can remove the write"
+            );
+        (await CountEnqueuedAsync()).Should().Be(0, "the flushed queue row rolls back too");
     }
 
     // ────────────────────────────────────────────────────────────────
@@ -161,6 +184,11 @@ public class QueueHookTransactionTests : TestSetup
     }
 
     public record AmbientThrowInput
+    {
+        public string Value { get; init; } = string.Empty;
+    }
+
+    public record AmbientFlushInput
     {
         public string Value { get; init; } = string.Empty;
     }
@@ -229,5 +257,23 @@ public class QueueHookTransactionTests : TestSetup
 
         protected override Task<Either<Exception, Unit>> Junctions() =>
             Task.FromResult<Either<Exception, Unit>>(Unit.Default);
+    }
+
+    public interface IAmbientFlushThenThrowTrain : IServiceTrain<AmbientFlushInput, Unit>;
+
+    public class AmbientFlushThenThrowTrain(IEnqueueContextAccessor accessor)
+        : ServiceTrain<AmbientFlushInput, Unit>,
+            IAmbientFlushThenThrowTrain
+    {
+        // Against the documented contract on purpose: a hook that saves on the enqueue's
+        // context flushes the row and its own write before the enqueue commits.
+        protected override async Task OnQueue(Metadata metadata, CancellationToken ct)
+        {
+            await accessor.Current!.Track(Marker("ambient-flush"));
+            await accessor.Current!.SaveChanges(ct);
+            throw new InvalidOperationException("hook rejected the mutation after flushing");
+        }
+
+        protected override Task<Either<Exception, Unit>> Junctions() => Task.FromResult(Resolve());
     }
 }

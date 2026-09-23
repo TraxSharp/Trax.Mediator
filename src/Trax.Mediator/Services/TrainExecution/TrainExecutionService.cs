@@ -266,7 +266,7 @@ public class TrainExecutionService(
 
     /// <summary>
     /// The longest subject key an enqueue accepts. Well inside the Postgres btree entry limit
-    /// even when every character takes four bytes.
+    /// even when every character takes three bytes, the most a UTF-16 unit encodes to.
     /// </summary>
     private const int MaxSubjectKeyLength = 512;
 
