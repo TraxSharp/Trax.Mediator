@@ -15,7 +15,10 @@ namespace Trax.Mediator.Tests.Postgres.Integration.IntegrationTests;
 /// Covers the subject key a train may attach to its queue entry: where it comes from, and what
 /// happens when it cannot be produced or is not usable. How dispatch serializes on it is covered
 /// in the scheduler's <c>SubjectKeySerializationTests</c>.
+///
+/// <para>Enforces Trax.Docs/adr/0019-queued-work-for-one-subject-runs-one-at-a-time.md.</para>
 /// </summary>
+[Property("adr", "Trax.Docs/adr/0019-queued-work-for-one-subject-runs-one-at-a-time.md")]
 [TestFixture]
 public class SubjectKeyTests : TestSetup
 {

@@ -20,7 +20,10 @@ namespace Trax.Mediator.Tests.MemoryLeak.Integration.UnitTests;
 /// container, before it is needed. Each of those otherwise waits for something to run the train,
 /// which for a rarely-taken train can be a long way from deployment. Whether a junction can be
 /// constructed is deliberately not checked.</para>
+///
+/// <para>Enforces Trax.Docs/adr/0016-a-junction-chain-is-a-declaration-not-a-step-of-the-work.md.</para>
 /// </summary>
+[Property("adr", "Trax.Docs/adr/0016-a-junction-chain-is-a-declaration-not-a-step-of-the-work.md")]
 [TestFixture]
 public class TrainChainStartupValidatorTests
 {

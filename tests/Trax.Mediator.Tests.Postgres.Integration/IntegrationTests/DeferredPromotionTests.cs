@@ -24,7 +24,13 @@ namespace Trax.Mediator.Tests.Postgres.Integration.IntegrationTests;
 /// Immediate promotion is the default. Deferral is opt-in, because it costs an extra round trip and
 /// only earns anything when the hook writes somewhere Trax's own transaction cannot reach.
 /// </para>
+///
+/// <para>Enforces Trax.Docs/adr/0018-a-deferred-enqueue-is-staged-and-a-stranded-one-is-cancelled.md.</para>
 /// </summary>
+[Property(
+    "adr",
+    "Trax.Docs/adr/0018-a-deferred-enqueue-is-staged-and-a-stranded-one-is-cancelled.md"
+)]
 [TestFixture]
 public class DeferredPromotionTests : TestSetup
 {
