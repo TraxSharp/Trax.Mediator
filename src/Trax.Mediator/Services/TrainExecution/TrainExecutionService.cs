@@ -286,9 +286,9 @@ public class TrainExecutionService(
     /// <remarks>
     /// The phases are deliberately separate commits. A hook whose side-effect lives in another
     /// database cannot join Trax's transaction, so the pair cannot be made atomic — but staging the
-    /// entry first means a crash between the two leaves an unconfirmed entry that
-    /// <c>IWorkQueuePromotion.PromoteStaleAsync</c> can recover, instead of a side-effect that
-    /// nothing will ever consume.
+    /// entry first means a crash between the two leaves an unconfirmed entry, which the
+    /// scheduler's stale-entry sweep finds and resolves (see docs/0018), instead of a side-effect
+    /// that nothing will ever consume.
     ///
     /// A hook that <em>throws</em> still aborts the enqueue outright: the staged entry is removed,
     /// so the observable contract is unchanged.
