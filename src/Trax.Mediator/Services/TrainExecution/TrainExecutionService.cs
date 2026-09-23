@@ -24,6 +24,7 @@ using Trax.Mediator.Services.ConcurrencyLimiter;
 using Trax.Mediator.Services.RunExecutor;
 using Trax.Mediator.Services.TrainAuthorization;
 using Trax.Mediator.Services.TrainDiscovery;
+using Trax.Mediator.Services.TrustedExecution;
 
 namespace Trax.Mediator.Services.TrainExecution;
 
@@ -519,6 +520,11 @@ public class TrainExecutionService(
             await authService.AuthorizeAsync(registration, ct);
             return;
         }
+
+        // Trusted infrastructure (a scheduler pipeline, a remote job runner, the dashboard's
+        // admin surface) was authorized at its own gate, and an enforcer would skip it too.
+        if (serviceProvider.GetService<ITrustedExecutionScope>() is { IsTrusted: true })
+            return;
 
         // Fail closed: if the train carries auth requirements but no enforcer is
         // registered, refuse to execute. Hosts that genuinely run no API submissions

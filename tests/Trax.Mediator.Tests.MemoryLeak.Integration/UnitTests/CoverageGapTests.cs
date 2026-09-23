@@ -175,6 +175,45 @@ public class CoverageGapTests
     }
 
     [Test]
+    public async Task QueueAsync_AuthorizedTrain_NoAuthService_UnderATrustedScope_Queues()
+    {
+        // Trusted infrastructure was authorized at its own gate: the dashboard's admin surface,
+        // a scheduler pipeline. An enforcer would skip it, so the fail-closed check does too.
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddTrax(trax =>
+            trax.AddEffects(effects => effects.UseInMemory())
+                .AddMediator(mediator => mediator.ScanAssemblies(typeof(CoverageGapTests).Assembly))
+        );
+        using var provider = services.BuildServiceProvider();
+        var execution = provider.GetRequiredService<ITrainExecutionService>();
+        var trusted =
+            provider.GetRequiredService<Trax.Mediator.Services.TrustedExecution.ITrustedExecutionScope>();
+
+        var inputJson = JsonSerializer.Serialize(
+            new AuthGapInput { Value = "x" },
+            TraxEffectConfiguration.StaticSystemJsonSerializerOptions
+        );
+
+        using (trusted.BeginTrusted("test.admin-surface"))
+        {
+            var queued = await execution.QueueAsync(
+                typeof(IAuthorizedGapTrain).FullName!,
+                inputJson
+            );
+            queued.WorkQueueId.Should().BeGreaterThan(0);
+        }
+
+        var outside = async () =>
+            await execution.QueueAsync(typeof(IAuthorizedGapTrain).FullName!, inputJson);
+        await outside
+            .Should()
+            .ThrowAsync<InvalidOperationException>(
+                "outside the scope the check still fails closed"
+            );
+    }
+
+    [Test]
     public async Task RunAsync_AuthorizedTrain_NoAuthService_ThrowsInvalidOperation()
     {
         // A train carrying [TraxAuthorize] requires ITrainAuthorizationService unless
