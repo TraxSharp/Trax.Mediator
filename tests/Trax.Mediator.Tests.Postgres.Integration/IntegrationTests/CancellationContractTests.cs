@@ -55,16 +55,27 @@ public class CancellationContractTests : TestSetup
         using var cts = new CancellationTokenSource();
 
         var runTask = execution.RunAsync(typeof(ICooperativeTrain).FullName!, "{}", cts.Token);
-        await CancelProbe.Started.Task;
+        try
+        {
+            await AwaitSignalAsync(CancelProbe.Started.Task, runTask, "the train started");
 
-        await cts.CancelAsync();
+            await cts.CancelAsync();
 
-        var awaiting = async () => await runTask;
-        await awaiting.Should().ThrowAsync<OperationCanceledException>();
+            var awaiting = async () => await runTask.WaitAsync(SignalTimeout);
+            await awaiting.Should().ThrowAsync<OperationCanceledException>();
 
-        CancelProbe
-            .RanToCompletion.Should()
-            .BeFalse("a train that passes the token to its downstream call is genuinely stopped");
+            CancelProbe
+                .RanToCompletion.Should()
+                .BeFalse(
+                    "a train that passes the token to its downstream call is genuinely stopped"
+                );
+        }
+        finally
+        {
+            // The train parks until the token fires, so a failure above must still cancel it.
+            await cts.CancelAsync();
+            await DrainAsync(runTask);
+        }
     }
 
     [Test]
@@ -74,30 +85,40 @@ public class CancellationContractTests : TestSetup
         using var cts = new CancellationTokenSource();
 
         var runTask = execution.RunAsync(typeof(IIndifferentTrain).FullName!, "{}", cts.Token);
-        await CancelProbe.Started.Task;
-
-        await cts.CancelAsync();
-
-        runTask
-            .IsCompleted.Should()
-            .BeFalse("cancelling the caller's token does not interrupt work that ignores it");
-
-        // The downstream system answers after the caller has already given up.
-        CancelProbe.Downstream.SetResult();
-
-        // Whether the call then throws or returns the result is Trax.Effect's to decide, and it
-        // changed when the terminal write stopped running on the caller's token — see
-        // CancelledOutcomePersistenceTests there. What this repo owns is the fact above it: the
-        // work was not interruptible, so it ran to completion after the caller had given up.
         try
         {
-            await runTask;
-        }
-        catch (OperationCanceledException) { }
+            await AwaitSignalAsync(CancelProbe.Started.Task, runTask, "the train started");
 
-        CancelProbe
-            .RanToCompletion.Should()
-            .BeTrue("the write landed downstream after the caller stopped waiting for it");
+            await cts.CancelAsync();
+
+            runTask
+                .IsCompleted.Should()
+                .BeFalse("cancelling the caller's token does not interrupt work that ignores it");
+
+            // The downstream system answers after the caller has already given up.
+            CancelProbe.Downstream.SetResult();
+
+            // Whether the call then throws or returns the result is Trax.Effect's to decide, and
+            // it changed when the terminal write stopped running on the caller's token — see
+            // CancelledOutcomePersistenceTests there. What this repo owns is the fact above it:
+            // the work was not interruptible, so it ran to completion after the caller had given
+            // up.
+            try
+            {
+                await runTask.WaitAsync(SignalTimeout);
+            }
+            catch (OperationCanceledException) { }
+
+            CancelProbe
+                .RanToCompletion.Should()
+                .BeTrue("the write landed downstream after the caller stopped waiting for it");
+        }
+        finally
+        {
+            // The train ignores the token, so only the downstream gate can let it finish.
+            CancelProbe.Downstream.TrySetResult();
+            await DrainAsync(runTask);
+        }
     }
 
     private IDataContext NewContext() =>

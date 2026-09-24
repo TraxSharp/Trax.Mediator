@@ -39,23 +39,35 @@ public class ExecutionModeContractTests : TestSetup
             CancellationToken.None
         );
 
-        // Synchronise on the train reaching its downstream call rather than on a duration:
-        // at this instant the work is provably outstanding.
-        await DownstreamProbe.ReachedDownstream.Task;
-
-        runTask
-            .IsCompleted.Should()
-            .BeFalse(
-                "RUN awaits downstream work — a caller that timed out here would abandon a live execution"
+        try
+        {
+            // Synchronise on the train reaching its downstream call rather than on a duration:
+            // at this instant the work is provably outstanding.
+            await AwaitSignalAsync(
+                DownstreamProbe.ReachedDownstream.Task,
+                runTask,
+                "the train reached its downstream call"
             );
-        DownstreamProbe.CompletedAt.Should().BeNull();
 
-        DownstreamProbe.Downstream.SetResult();
-        await runTask;
+            runTask
+                .IsCompleted.Should()
+                .BeFalse(
+                    "RUN awaits downstream work — a caller that timed out here would abandon a live execution"
+                );
+            DownstreamProbe.CompletedAt.Should().BeNull();
 
-        DownstreamProbe
-            .CompletedAt.Should()
-            .NotBeNull("the downstream work completed before RUN returned");
+            DownstreamProbe.Downstream.SetResult();
+            await runTask.WaitAsync(SignalTimeout);
+
+            DownstreamProbe
+                .CompletedAt.Should()
+                .NotBeNull("the downstream work completed before RUN returned");
+        }
+        finally
+        {
+            DownstreamProbe.Downstream.TrySetResult();
+            await DrainAsync(runTask);
+        }
     }
 
     [Test]
@@ -68,27 +80,39 @@ public class ExecutionModeContractTests : TestSetup
             "{}",
             CancellationToken.None
         );
-        await DownstreamProbe.ReachedDownstream.Task;
-
-        var factory = Scope.ServiceProvider.GetRequiredService<IDataContextProviderFactory>();
-        using (var context = (IDataContext)factory.Create())
+        try
         {
-            var inFlight = await context
-                .Metadatas.AsNoTracking()
-                .SingleAsync(m => m.Name == typeof(IGatedDownstreamTrain).FullName);
+            await AwaitSignalAsync(
+                DownstreamProbe.ReachedDownstream.Task,
+                runTask,
+                "the train reached its downstream call"
+            );
 
-            inFlight
-                .TrainState.Should()
-                .NotBe(
-                    TrainState.Completed,
-                    "the row is opened before the train runs, so a concurrent reader sees an "
-                        + "unfinished execution — which is not the same as RUN having returned"
-                );
-            inFlight.EndTime.Should().BeNull();
+            var factory = Scope.ServiceProvider.GetRequiredService<IDataContextProviderFactory>();
+            using (var context = (IDataContext)factory.Create())
+            {
+                var inFlight = await context
+                    .Metadatas.AsNoTracking()
+                    .SingleAsync(m => m.Name == typeof(IGatedDownstreamTrain).FullName);
+
+                inFlight
+                    .TrainState.Should()
+                    .NotBe(
+                        TrainState.Completed,
+                        "the row is opened before the train runs, so a concurrent reader sees an "
+                            + "unfinished execution — which is not the same as RUN having returned"
+                    );
+                inFlight.EndTime.Should().BeNull();
+            }
+
+            DownstreamProbe.Downstream.SetResult();
+            await runTask.WaitAsync(SignalTimeout);
         }
-
-        DownstreamProbe.Downstream.SetResult();
-        await runTask;
+        finally
+        {
+            DownstreamProbe.Downstream.TrySetResult();
+            await DrainAsync(runTask);
+        }
     }
 
     [Test]
