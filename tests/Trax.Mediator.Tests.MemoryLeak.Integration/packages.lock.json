@@ -107,44 +107,44 @@
       },
       "Trax.Effect.Data.InMemory": {
         "type": "Direct",
-        "requested": "[1.54.0, )",
-        "resolved": "1.54.0",
-        "contentHash": "yHbQn7hlPXd094rUouFJyx3de39fAtERaYmSIEg24o+nnfztvXEwiAi0dFYlQIpDnqfySlz/A0G8ReiJs+k69g==",
+        "requested": "[1.54.1, )",
+        "resolved": "1.54.1",
+        "contentHash": "Oa+UyHMWkoy9WEZiTP40OGUY6mSVyMXxMUaGFy7MC9fFoWuzb4XQ87Z5R0m5MT5HzLz4TRqQfKutlAHrDSrRpA==",
         "dependencies": {
           "Microsoft.EntityFrameworkCore": "10.0.3",
           "Microsoft.EntityFrameworkCore.InMemory": "10.0.3",
           "Microsoft.EntityFrameworkCore.Relational": "10.0.3",
-          "Microsoft.Extensions.DependencyInjection": "10.0.11",
-          "Microsoft.Extensions.Hosting.Abstractions": "10.0.11",
-          "Microsoft.Extensions.Logging": "10.0.11",
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.11",
+          "Microsoft.Extensions.DependencyInjection": "10.0.12",
+          "Microsoft.Extensions.Hosting.Abstractions": "10.0.12",
+          "Microsoft.Extensions.Logging": "10.0.12",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.12",
           "Npgsql": "10.0.3",
-          "Trax.Core": "1.6.0",
-          "Trax.Effect.Data": "1.54.0"
+          "Trax.Core": "1.7.1",
+          "Trax.Effect.Data": "1.54.1"
         }
       },
       "Trax.Effect.Provider.Json": {
         "type": "Direct",
-        "requested": "[1.54.0, )",
-        "resolved": "1.54.0",
-        "contentHash": "S/nYhrOjtjtHRrkwcxO0zvDZ58Eax5kWggxb/fF3l6pBQ5rrwoSi/7dS+vu5p02RuliOxsPNpM8WvsAOQLv/Sg==",
+        "requested": "[1.54.1, )",
+        "resolved": "1.54.1",
+        "contentHash": "dMVqBO3PBtIycN29VxiTm9ddvz0O17zQV1Sgi5TNvNSMIO9QUdL2KUxoap7mld62EAQ3OLPQ9+CAL36MDxDMyA==",
         "dependencies": {
-          "Microsoft.Extensions.Hosting.Abstractions": "10.0.11",
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.11",
-          "Trax.Core": "1.6.0",
-          "Trax.Effect": "1.54.0"
+          "Microsoft.Extensions.Hosting.Abstractions": "10.0.12",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.12",
+          "Trax.Core": "1.7.1",
+          "Trax.Effect": "1.54.1"
         }
       },
       "Trax.Effect.Provider.Parameter": {
         "type": "Direct",
-        "requested": "[1.54.0, )",
-        "resolved": "1.54.0",
-        "contentHash": "ZE5vi69WpyUhXNwG5KkUA7n/cJbVyBzTdVnZputA/QHgZqzGS1azIuTYmKZWTH2Y1AQUbXgJqhw3sYb8NSMX2w==",
+        "requested": "[1.54.1, )",
+        "resolved": "1.54.1",
+        "contentHash": "CNJghPlSBX9krpUzdnsB8JPLGGjiYEcbdZ+RcU2YdpX1/lJiRmDH2hjHQNntF+xHS4hFnHgxPxeZIotEldHtYw==",
         "dependencies": {
-          "Microsoft.Extensions.Hosting.Abstractions": "10.0.11",
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.11",
-          "Trax.Core": "1.6.0",
-          "Trax.Effect": "1.54.0"
+          "Microsoft.Extensions.Hosting.Abstractions": "10.0.12",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.12",
+          "Trax.Core": "1.7.1",
+          "Trax.Effect": "1.54.1"
         }
       },
       "Castle.Core": {
@@ -290,11 +290,11 @@
       },
       "Microsoft.Extensions.Diagnostics.Abstractions": {
         "type": "Transitive",
-        "resolved": "10.0.11",
-        "contentHash": "se7Kx8QpJEt+nf26L4qIVAofGTDr1wbexxsh/Fm3Xc04xUkqUXK06KUS7FLwSQYSjqb7q9n+T7MEcXYBhI1Y5g==",
+        "resolved": "10.0.12",
+        "contentHash": "fMp91qlRlMOuHfMyp7LuAnOS+MOeWTF1obJmyFcs4nZCXu6pr+QB1AbFJcl2qpBltBrqF/Y7+Rn9IuNcSuctig==",
         "dependencies": {
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.11",
-          "Microsoft.Extensions.Options": "10.0.11"
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.12",
+          "Microsoft.Extensions.Options": "10.0.12"
         }
       },
       "Microsoft.Extensions.FileProviders.Abstractions": {
@@ -322,14 +322,14 @@
       },
       "Microsoft.Extensions.Hosting.Abstractions": {
         "type": "Transitive",
-        "resolved": "10.0.11",
-        "contentHash": "pwtpF7iF/NNaOBcX+pvMZ7y2+JAVbH5KkNrH9uMZtuVxVJsFTDiWiCR7Tk3HVptsAijaetipUZVRVK2LLq+nvA==",
+        "resolved": "10.0.12",
+        "contentHash": "ZlIxIJtWmrph0Ikj0svSaTkZ+d+ZYpTAhazpf1b3aoFRmlNnNWwkcvqnqT9yKHjKvfBRthvUrkq11OxfItOhpg==",
         "dependencies": {
-          "Microsoft.Extensions.Configuration.Abstractions": "10.0.11",
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.11",
-          "Microsoft.Extensions.Diagnostics.Abstractions": "10.0.11",
-          "Microsoft.Extensions.FileProviders.Abstractions": "10.0.11",
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.11"
+          "Microsoft.Extensions.Configuration.Abstractions": "10.0.12",
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.12",
+          "Microsoft.Extensions.Diagnostics.Abstractions": "10.0.12",
+          "Microsoft.Extensions.FileProviders.Abstractions": "10.0.12",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.12"
         }
       },
       "Microsoft.Extensions.Logging": {
@@ -466,8 +466,8 @@
       },
       "Trax.Core": {
         "type": "Transitive",
-        "resolved": "1.6.0",
-        "contentHash": "B0jTB0jsxtaT7dDnYrbhWHd083RMMKzlCh6AX34wYcMQCKuL+N9nObPLrzZaF3YekAVVFn2+zyIocdN28mIqCA==",
+        "resolved": "1.7.1",
+        "contentHash": "XJFN/xvfJ3WpYbjkVmYPtp8JGjXnVndv3truGsiUGZ5Kk/eXINHbishSZZCojz7CDMMlfgseXUrKlip/ElEGJg==",
         "dependencies": {
           "LanguageExt.Core": "4.4.9",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.3",
@@ -478,15 +478,15 @@
         "type": "Project",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection": "[10.0.12, )",
-          "Trax.Effect": "[1.54.0, )",
-          "Trax.Effect.Data": "[1.54.0, )"
+          "Trax.Effect": "[1.54.1, )",
+          "Trax.Effect.Data": "[1.54.1, )"
         }
       },
       "trax.mediator.tests.arraylogger": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Extensions.Logging.Abstractions": "[10.0.12, )",
-          "Trax.Effect": "[1.54.0, )"
+          "Trax.Effect": "[1.54.1, )"
         }
       },
       "Microsoft.Extensions.Logging.Abstractions": {
@@ -500,30 +500,30 @@
       },
       "Trax.Effect": {
         "type": "CentralTransitive",
-        "requested": "[1.54.0, )",
-        "resolved": "1.54.0",
-        "contentHash": "cUDGoUzB+SP1M1uiAmN2CEgCo2rmKN90r91UZGwzSPxoTbIdYKJtHil6ZO2gNoSEA/EpnMuMo/pn/E7yOB16Mw==",
+        "requested": "[1.54.1, )",
+        "resolved": "1.54.1",
+        "contentHash": "hvPLiPnFUf77G3vLh5fPcp6aRaDGmOS2ZJqZGkJfjcf9t5gqeX1NxKx7tXG3kTeDBZqCqL7sCjM8YGzqOr9lDg==",
         "dependencies": {
-          "Microsoft.Extensions.Hosting.Abstractions": "10.0.11",
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.11",
-          "Trax.Core": "1.6.0"
+          "Microsoft.Extensions.Hosting.Abstractions": "10.0.12",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.12",
+          "Trax.Core": "1.7.1"
         }
       },
       "Trax.Effect.Data": {
         "type": "CentralTransitive",
-        "requested": "[1.54.0, )",
-        "resolved": "1.54.0",
-        "contentHash": "jViqCeSP6FzluERkybNpdUzgQW2rdD1g66kcwhh/cofB631G9bnHlTHrdw4nF9pDlf8S51NYlOzyM6c93H/H5Q==",
+        "requested": "[1.54.1, )",
+        "resolved": "1.54.1",
+        "contentHash": "aveAd7Gp/n7yCiNM14UvVYkZ/1r0wUb7CwBy1qcG+nLURI0/chYiaAhaMk/q/XKUMr8WYYTOWpKuvOaLJRlk2A==",
         "dependencies": {
           "Microsoft.EntityFrameworkCore": "10.0.3",
           "Microsoft.EntityFrameworkCore.Relational": "10.0.3",
-          "Microsoft.Extensions.DependencyInjection": "10.0.11",
-          "Microsoft.Extensions.Hosting.Abstractions": "10.0.11",
-          "Microsoft.Extensions.Logging": "10.0.11",
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.11",
+          "Microsoft.Extensions.DependencyInjection": "10.0.12",
+          "Microsoft.Extensions.Hosting.Abstractions": "10.0.12",
+          "Microsoft.Extensions.Logging": "10.0.12",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.12",
           "Npgsql": "10.0.3",
-          "Trax.Core": "1.6.0",
-          "Trax.Effect": "1.54.0"
+          "Trax.Core": "1.7.1",
+          "Trax.Effect": "1.54.1"
         }
       }
     }
