@@ -198,19 +198,65 @@ public class TrainChainStartupValidatorTests
     }
 
     [Test]
-    public async Task Startup_WhenATrainCanOnlyBeBuiltInsideARequest_StartsAndSkipsIt() =>
-        (
-            await Start<IRequestBoundTrain, RequestBoundTrain>(configure: services =>
-                services.AddScoped<IRequestOnlyService>(_ =>
-                    throw new InvalidOperationException("no HttpContext outside a request")
-                )
-            )
-        )
+    public async Task Startup_WhenATrainCanOnlyBeBuiltInsideARequest_StartsAndSkipsIt()
+    {
+        var logger = new RecordingLogger();
+
+        var failure = await Start<IRequestBoundTrain, RequestBoundTrain>(
+            configure: RequestOnlyService,
+            logger: logger
+        );
+
+        failure
             .Should()
             .BeNull(
                 "a train that cannot be built at boot is not evidence of a chain that cannot run, "
                     + "and refusing to start over it would break hosts that ran fine before"
             );
+        logger
+            .Warnings.Should()
+            .ContainSingle("a skipped train is reported, so a skip can be told from a pass")
+            .Which.Should()
+            .Contain(nameof(IRequestBoundTrain))
+            .And.Contain("could not be constructed outside a request")
+            .And.Contain("no HttpContext outside a request");
+    }
+
+    [Test]
+    public async Task Startup_WhenATrainIsSkipped_StillChecksTheTrainsAfterIt()
+    {
+        var logger = new RecordingLogger();
+
+        var failure = await StartMany(
+            [
+                (
+                    typeof(IRequestBoundTrain),
+                    typeof(RequestBoundTrain),
+                    Registration<IRequestBoundTrain, RequestBoundTrain>()
+                ),
+                (
+                    typeof(IBrokenFlowTrain),
+                    typeof(BrokenFlowTrain),
+                    Registration<IBrokenFlowTrain, BrokenFlowTrain>()
+                ),
+            ],
+            configure: RequestOnlyService,
+            logger: logger
+        );
+
+        failure.Should().BeOfType<TrainException>("the broken train after the skipped one is read");
+        failure!
+            .Message.Should()
+            .Contain("1 of 1", "the skipped train is not counted as checked")
+            .And.Contain(nameof(IBrokenFlowTrain))
+            .And.NotContain(nameof(IRequestBoundTrain));
+        logger.Warnings.Should().ContainSingle().Which.Should().Contain(nameof(IRequestBoundTrain));
+    }
+
+    private static void RequestOnlyService(IServiceCollection services) =>
+        services.AddScoped<IRequestOnlyService>(_ =>
+            throw new InvalidOperationException("no HttpContext outside a request")
+        );
 
     [Test]
     public async Task Startup_WhenSeveralTrainsCannotRun_ReportsEveryOne()

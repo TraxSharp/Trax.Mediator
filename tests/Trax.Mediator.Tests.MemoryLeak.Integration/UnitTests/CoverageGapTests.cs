@@ -223,9 +223,8 @@ public class CoverageGapTests
         var outside = async () => await execution.RunAsync(trainName, inputJson);
         await outside
             .Should()
-            .ThrowAsync<InvalidOperationException>(
-                "outside the scope the check still fails closed"
-            );
+            .ThrowAsync<InvalidOperationException>("outside the scope the check still fails closed")
+            .WithMessage("*declares [TraxAuthorize] but no ITrainAuthorizationService*");
     }
 
     [Test]
@@ -262,9 +261,8 @@ public class CoverageGapTests
             await execution.QueueAsync(typeof(IAuthorizedGapTrain).FullName!, inputJson);
         await outside
             .Should()
-            .ThrowAsync<InvalidOperationException>(
-                "outside the scope the check still fails closed"
-            );
+            .ThrowAsync<InvalidOperationException>("outside the scope the check still fails closed")
+            .WithMessage("*declares [TraxAuthorize] but no ITrainAuthorizationService*");
     }
 
     [Test]
@@ -292,7 +290,7 @@ public class CoverageGapTests
 
         await act.Should()
             .ThrowAsync<InvalidOperationException>()
-            .WithMessage("*ITrainAuthorizationService*");
+            .WithMessage("*declares [TraxAuthorize] but no ITrainAuthorizationService*");
     }
 
     #endregion
