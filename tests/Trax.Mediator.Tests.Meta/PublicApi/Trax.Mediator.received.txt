@@ -39,6 +39,12 @@ namespace Trax.Mediator.Exceptions
         public System.Collections.Generic.IReadOnlyList<string> CandidateFullNames { get; }
         public string RequestedName { get; }
     }
+    public class QueuedWorkCancelledException : System.InvalidOperationException
+    {
+        public QueuedWorkCancelledException(long workQueueId, string trainName) { }
+        public string TrainName { get; }
+        public long WorkQueueId { get; }
+    }
     public class TrainInputValidationException : System.InvalidOperationException
     {
         public TrainInputValidationException(string trainName, int observedBytes, int maxBytes) { }

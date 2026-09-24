@@ -10,6 +10,7 @@ using Trax.Effect.Models.Metadata;
 using Trax.Effect.Models.WorkQueue;
 using Trax.Effect.Models.WorkQueue.DTOs;
 using Trax.Effect.Services.ServiceTrain;
+using Trax.Mediator.Exceptions;
 using Trax.Mediator.Services.TrainExecution;
 using Trax.Mediator.Tests.Postgres.Integration.Fixtures;
 
@@ -319,10 +320,16 @@ public class DeferredPromotionTests : TestSetup
                 "{\"Value\":\"x\"}"
             );
 
-        (await act.Should().ThrowAsync<InvalidOperationException>()).WithMessage(
-            "*cancelled before its OnQueue hook returned*",
-            "reporting success for work that will not run would be false"
-        );
+        var cancelled = (
+            await act.Should()
+                .ThrowAsync<QueuedWorkCancelledException>(
+                    "reporting success for work that will not run would be false, and a caller "
+                        + "compensating for the hook's side-effect needs a type to catch"
+                )
+        ).Which;
+        cancelled.WorkQueueId.Should().BePositive();
+        cancelled.TrainName.Should().Be(typeof(IDeferringSelfCancelTrain).FullName);
+        cancelled.Message.Should().Contain("cancelled before its OnQueue hook returned");
     }
 
     [Test]

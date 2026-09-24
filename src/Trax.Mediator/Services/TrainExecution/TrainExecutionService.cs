@@ -72,14 +72,15 @@ public class TrainExecutionService(
 
         registration.ServiceType.FullName.AssertLoaded();
 
-        // No input is read as an empty object. A run needs an input instance, and the runner
-        // refuses an entry that has none, so storing null only deferred the failure to dispatch,
-        // where nobody who could fix it would see it. A train whose input cannot be built from
-        // an empty object fails here instead.
-        var json = string.IsNullOrWhiteSpace(inputJson) ? "{}" : inputJson;
+        // A run needs an input instance, and the runner refuses an entry that has none, so
+        // storing null only deferred the failure to dispatch, where nobody who could fix it would
+        // see it. No input is read as an empty object instead, which is refused here when the
+        // input type needs values (see DeserializeInput).
+        var missing = string.IsNullOrWhiteSpace(inputJson);
+        var json = missing ? EmptyInput : inputJson!;
 
         EnforceInputSizeCap(json, registration);
-        var input = DeserializeInput(json, registration);
+        var input = DeserializeInput(json, registration, missing);
 
         var serializedInput = JsonSerializer.Serialize(
             input,
@@ -161,8 +162,13 @@ public class TrainExecutionService(
     {
         var registration = FindTrain(trainName);
         await AuthorizeAsync(registration, ct);
-        EnforceInputSizeCap(inputJson, registration);
-        var input = DeserializeInput(inputJson, registration);
+
+        // Read the same way QueueAsync reads it, so the two methods agree on a missing input.
+        var missing = string.IsNullOrWhiteSpace(inputJson);
+        var json = missing ? EmptyInput : inputJson!;
+
+        EnforceInputSizeCap(json, registration);
+        var input = DeserializeInput(json, registration, missing);
 
         registration.ServiceType.FullName.AssertLoaded();
 
@@ -268,7 +274,7 @@ public class TrainExecutionService(
     /// The longest subject key an enqueue accepts. Well inside the Postgres btree entry limit
     /// even when every character takes three bytes, the most a UTF-16 unit encodes to.
     /// </summary>
-    private const int MaxSubjectKeyLength = 512;
+    private const int MaxSubjectKeyLength = WorkQueue.MaxSubjectKeyLength;
 
     /// <summary>
     /// A scheduled time stored as UTC whatever it arrived as. Local times are converted; an
@@ -347,10 +353,9 @@ public class TrainExecutionService(
             !await promotion.PromoteAsync(entry.Id, CancellationToken.None)
             && !await WasConfirmedElsewhereAsync(entry.Id)
         )
-            throw new InvalidOperationException(
-                $"Work queue entry {entry.Id} for {registration.ServiceTypeName} was cancelled "
-                    + "before its OnQueue hook returned, so it will not run. The hook's "
-                    + "side-effect may already have been applied."
+            throw new QueuedWorkCancelledException(
+                entry.Id,
+                registration.ServiceType.FullName ?? registration.ServiceTypeName
             );
 
         return new QueueTrainResult(entry.Id, entry.ExternalId);
@@ -606,13 +611,50 @@ public class TrainExecutionService(
             );
     }
 
-    private static object DeserializeInput(string inputJson, TrainRegistration registration)
+    /// <summary>What a missing input is read as.</summary>
+    private const string EmptyInput = "{}";
+
+    private static object DeserializeInput(
+        string inputJson,
+        TrainRegistration registration,
+        bool missing
+    )
     {
-        var input = JsonSerializer.Deserialize(
-            inputJson,
-            registration.InputType,
-            TraxEffectConfiguration.StaticSystemJsonSerializerOptions
-        );
+        object? input;
+
+        if (missing)
+        {
+            // A missing input stands in for an input with no values, which is only honest for a
+            // type that needs none. System.Text.Json builds a positional record from {} with every
+            // constructor parameter at its default, so without this a train taking
+            // record RenamePlayer(string Id, string NewName) would be queued with a null Id.
+            // Respecting required constructor parameters refuses exactly that, and leaves Unit,
+            // an input with only settable properties, and parameters with defaults unaffected.
+            try
+            {
+                input = JsonSerializer.Deserialize(
+                    inputJson,
+                    registration.InputType,
+                    EmptyInputOptions()
+                );
+            }
+            catch (JsonException refused)
+            {
+                throw new JsonException(
+                    $"No input was given, and {registration.InputTypeName} cannot be built "
+                        + $"without one: {refused.Message}",
+                    refused
+                );
+            }
+        }
+        else
+        {
+            input = JsonSerializer.Deserialize(
+                inputJson,
+                registration.InputType,
+                TraxEffectConfiguration.StaticSystemJsonSerializerOptions
+            );
+        }
 
         // A JSON null is well-formed but is not an input, so it is reported the way any other
         // input the train cannot use is: as a JSON problem the caller can fix.
@@ -622,5 +664,27 @@ public class TrainExecutionService(
             );
 
         return input;
+    }
+
+    private static (JsonSerializerOptions Source, JsonSerializerOptions Strict)? _emptyInputOptions;
+
+    /// <summary>
+    /// The system options with required constructor parameters respected, rebuilt only if the
+    /// system options object itself is replaced.
+    /// </summary>
+    private static JsonSerializerOptions EmptyInputOptions()
+    {
+        var source = TraxEffectConfiguration.StaticSystemJsonSerializerOptions;
+        var cached = _emptyInputOptions;
+
+        if (cached is { } hit && ReferenceEquals(hit.Source, source))
+            return hit.Strict;
+
+        var strict = new JsonSerializerOptions(source)
+        {
+            RespectRequiredConstructorParameters = true,
+        };
+        _emptyInputOptions = (source, strict);
+        return strict;
     }
 }

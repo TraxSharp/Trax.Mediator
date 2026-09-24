@@ -57,6 +57,73 @@ public class QueueInputTests : TestSetup
     }
 
     [Test]
+    public async Task A_positional_record_input_is_refused_when_none_was_given()
+    {
+        // System.Text.Json builds a positional record from {} with every parameter at its
+        // default, so without the check this would queue a run whose Id is null.
+        var before = await WorkQueueCountAsync();
+
+        var act = async () =>
+            await Execution.QueueAsync(typeof(IPositionalInputTrain).FullName!, null);
+
+        (await act.Should().ThrowAsync<JsonException>()).WithMessage(
+            "No input was given*PositionalInput*",
+            "the caller is the one who can supply the missing values"
+        );
+        (await WorkQueueCountAsync()).Should().Be(before, "a refused enqueue writes nothing");
+    }
+
+    [Test]
+    public async Task A_positional_record_whose_parameters_have_defaults_can_be_queued_without_input()
+    {
+        var result = await Execution.QueueAsync(
+            typeof(IDefaultedPositionalInputTrain).FullName!,
+            ""
+        );
+
+        var stored = (await EntryAsync(result.WorkQueueId)).Input;
+
+        JsonSerializer.Deserialize<DefaultedPositionalInput>(stored!)!.Label.Should().Be("default");
+    }
+
+    [Test]
+    public async Task A_train_taking_Unit_can_be_queued_without_input()
+    {
+        var act = async () => await Execution.QueueAsync(typeof(IUnitInputTrain).FullName!, null);
+
+        await act.Should()
+            .NotThrowAsync("Unit needs no values, so a missing input stands in for it");
+    }
+
+    [Test]
+    public async Task An_explicit_empty_object_is_read_as_given_and_not_as_a_missing_input()
+    {
+        // Only a missing input is held to the stricter reading. An explicit {} is the caller's
+        // own input, and is deserialized the way any other input is.
+        var result = await Execution.QueueAsync(typeof(IPositionalInputTrain).FullName!, "{}");
+
+        (await EntryAsync(result.WorkQueueId)).Input.Should().NotBeNull();
+    }
+
+    [Test]
+    public async Task RunAsync_reads_a_missing_input_the_way_QueueAsync_does()
+    {
+        var refused = async () =>
+            await Execution.RunAsync(typeof(IPositionalInputTrain).FullName!, "");
+        var accepted = async () => await Execution.RunAsync(typeof(IUnitInputTrain).FullName!, " ");
+
+        (await refused.Should().ThrowAsync<JsonException>()).WithMessage("No input was given*");
+        await accepted.Should().NotThrowAsync();
+    }
+
+    private async Task<int> WorkQueueCountAsync()
+    {
+        var factory = Scope.ServiceProvider.GetRequiredService<IDataContextProviderFactory>();
+        using var context = await factory.CreateDbContextAsync(CancellationToken.None);
+        return await context.WorkQueues.CountAsync();
+    }
+
+    [Test]
     public async Task A_hook_receives_the_input_even_when_none_was_given()
     {
         HookProbe.Seen.Clear();
@@ -324,6 +391,33 @@ public class QueueInputTests : TestSetup
             return Task.CompletedTask;
         }
 
+        protected override Task<Either<Exception, Unit>> Junctions() => Task.FromResult(Resolve());
+    }
+
+    public record PositionalInput(string Id, string NewName);
+
+    public record DefaultedPositionalInput(string Label = "default");
+
+    public interface IPositionalInputTrain : IServiceTrain<PositionalInput, Unit>;
+
+    public class PositionalInputTrain : ServiceTrain<PositionalInput, Unit>, IPositionalInputTrain
+    {
+        protected override Task<Either<Exception, Unit>> Junctions() => Task.FromResult(Resolve());
+    }
+
+    public interface IDefaultedPositionalInputTrain : IServiceTrain<DefaultedPositionalInput, Unit>;
+
+    public class DefaultedPositionalInputTrain
+        : ServiceTrain<DefaultedPositionalInput, Unit>,
+            IDefaultedPositionalInputTrain
+    {
+        protected override Task<Either<Exception, Unit>> Junctions() => Task.FromResult(Resolve());
+    }
+
+    public interface IUnitInputTrain : IServiceTrain<Unit, Unit>;
+
+    public class UnitInputTrain : ServiceTrain<Unit, Unit>, IUnitInputTrain
+    {
         protected override Task<Either<Exception, Unit>> Junctions() => Task.FromResult(Resolve());
     }
 
