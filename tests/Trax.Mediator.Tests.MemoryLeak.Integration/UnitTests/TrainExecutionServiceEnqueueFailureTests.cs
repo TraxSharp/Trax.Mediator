@@ -1,6 +1,7 @@
 using FluentAssertions;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Trax.Core.Junction;
 using Trax.Effect.Data.Services.DataContext;
@@ -42,7 +43,7 @@ public class TrainExecutionServiceEnqueueFailureTests
     private static (TrainExecutionService Service, TrainRegistration Registration) Build<
         TService,
         TTrain
-    >(Action<IDataContext>? configureContext = null)
+    >(Action<IDataContext>? configureContext = null, RecordingLogger? logger = null)
         where TService : class
         where TTrain : class, TService
     {
@@ -60,6 +61,9 @@ public class TrainExecutionServiceEnqueueFailureTests
         var services = new ServiceCollection();
         services.AddScoped<TService, TTrain>();
         services.AddSingleton(Substitute.For<IEnqueueContextAccessor>());
+
+        if (logger is not null)
+            services.AddSingleton<ILogger<TrainExecutionService>>(logger);
 
         return (
             new TrainExecutionService(
@@ -178,6 +182,68 @@ public class TrainExecutionServiceEnqueueFailureTests
         await enqueue.Should().ThrowAsync<InvalidOperationException>();
 
         transaction.Received(1).Dispose();
+    }
+
+    [Test]
+    public async Task Enqueue_WhenTheRollbackAlsoThrows_LogsWhyTheRollbackFailed()
+    {
+        var rollbackFailure = new InvalidOperationException("the connection was already gone");
+
+        var transaction = Substitute.For<IDataContextTransaction>();
+        transaction.Rollback().Returns(Task.FromException(rollbackFailure));
+
+        var logger = new RecordingLogger();
+
+        var (service, registration) = Build<IHookedTrain, HookedTrain>(
+            context =>
+            {
+                context.BeginTransaction(Arg.Any<CancellationToken>()).Returns(transaction);
+                context
+                    .SaveChanges(Arg.Any<CancellationToken>())
+                    .Returns(Task.FromException(new InvalidOperationException("the write failed")));
+            },
+            logger
+        );
+
+        var enqueue = async () =>
+            await service.QueueAsync(registration.ServiceType.FullName!, InputJson);
+
+        await enqueue.Should().ThrowAsync<InvalidOperationException>();
+
+        logger
+            .Warnings.Should()
+            .ContainSingle(
+                "a rollback that failed is not dropped on the floor: it usually means the "
+                    + "transaction went with its connection and the entry may be left behind"
+            )
+            .Which.Exception.Should()
+            .BeSameAs(rollbackFailure);
+    }
+
+    /// <summary>
+    /// Keeps what the service logged, so a failure that was deliberately logged can be told from one
+    /// that was swallowed.
+    /// </summary>
+    private sealed class RecordingLogger : ILogger<TrainExecutionService>
+    {
+        public List<(string Message, Exception? Exception)> Warnings { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter
+        )
+        {
+            if (logLevel == LogLevel.Warning)
+                Warnings.Add((formatter(state, exception), exception));
+        }
     }
 
     // ────────────────────────────────────────────────────────────────

@@ -36,7 +36,8 @@ public class TrainChainStartupValidatorTests
         bool skip = false,
         Action<IServiceCollection>? configure = null,
         RecordingLogger? logger = null,
-        Func<IServiceScopeFactory, IServiceScopeFactory>? wrapScopes = null
+        Func<IServiceScopeFactory, IServiceScopeFactory>? wrapScopes = null,
+        CancellationToken token = default
     )
         where TService : class
         where TTrain : class, TService =>
@@ -45,7 +46,8 @@ public class TrainChainStartupValidatorTests
             skip,
             configure,
             logger,
-            wrapScopes
+            wrapScopes,
+            token
         );
 
     private static async Task<Exception?> StartMany(
@@ -53,7 +55,8 @@ public class TrainChainStartupValidatorTests
         bool skip = false,
         Action<IServiceCollection>? configure = null,
         RecordingLogger? logger = null,
-        Func<IServiceScopeFactory, IServiceScopeFactory>? wrapScopes = null
+        Func<IServiceScopeFactory, IServiceScopeFactory>? wrapScopes = null,
+        CancellationToken token = default
     )
     {
         var services = new ServiceCollection();
@@ -81,7 +84,7 @@ public class TrainChainStartupValidatorTests
 
         try
         {
-            await validator.StartAsync(CancellationToken.None);
+            await validator.StartAsync(token);
             return null;
         }
         catch (Exception ex)
@@ -349,6 +352,23 @@ public class TrainChainStartupValidatorTests
                     + "runs fine; refusing the host over it reports a disposal problem as a "
                     + "chain problem, and the only workaround is to turn the check off"
             );
+
+    [Test]
+    public async Task Startup_WhenTheHostIsAlreadyStopping_StopsRatherThanWorkingThrough()
+    {
+        using var stopping = new CancellationTokenSource();
+        await stopping.CancelAsync();
+
+        var outcome = await Start<IBrokenFlowTrain, BrokenFlowTrain>(token: stopping.Token);
+
+        outcome
+            .Should()
+            .BeAssignableTo<OperationCanceledException>(
+                "a host already shutting down should stop reading chains rather than work through "
+                    + "every registered train; this train's chain cannot run, so reporting that "
+                    + "instead would mean the check ran anyway"
+            );
+    }
 
     /// <summary>Keeps the warnings the validator logs, so a skip can be told from a pass.</summary>
     public sealed class RecordingLogger : ILogger<TrainChainStartupValidator>
