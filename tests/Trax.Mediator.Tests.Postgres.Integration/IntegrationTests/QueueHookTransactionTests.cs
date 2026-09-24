@@ -165,13 +165,34 @@ public class QueueHookTransactionTests : TestSetup
     }
 
     [Test]
-    public async Task Ambient_context_is_null_outside_the_enqueue_path()
+    public async Task Ambient_context_is_null_outside_the_hook()
     {
+        ObservingProbe.Reset();
         var accessor = Scope.ServiceProvider.GetRequiredService<IEnqueueContextAccessor>();
 
+        await Execution.QueueAsync(typeof(IObservingTrain).FullName!, "{}");
+
+        ObservingProbe
+            .DuringHook.Should()
+            .ContainSingle()
+            .Which.Should()
+            .BeTrue("the enqueue did enter the context, so its absence elsewhere means something");
+        ObservingProbe
+            .DuringKey.Should()
+            .ContainSingle()
+            .Which.Should()
+            .BeFalse("the subject key is computed before the enqueue has a context to offer");
         accessor
             .Current.Should()
-            .BeNull("the ambient context is only available while OnQueue is running");
+            .BeNull("the context is handed back when the enqueue returns, not left on the caller");
+
+        await Execution.RunAsync(typeof(IObservingTrain).FullName!, "{}");
+
+        ObservingProbe
+            .DuringRun.Should()
+            .ContainSingle()
+            .Which.Should()
+            .BeFalse("a run is not an enqueue, even when the same train was just queued");
     }
 
     // ────────────────────────────────────────────────────────────────
@@ -196,6 +217,51 @@ public class QueueHookTransactionTests : TestSetup
     public record OwnContextInput
     {
         public string Value { get; init; } = string.Empty;
+    }
+
+    public record ObservingInput
+    {
+        public string Value { get; init; } = string.Empty;
+    }
+
+    /// <summary>Whether <see cref="IEnqueueContextAccessor.Current"/> held a context at each point.</summary>
+    public static class ObservingProbe
+    {
+        public static List<bool> DuringHook { get; } = [];
+        public static List<bool> DuringKey { get; } = [];
+        public static List<bool> DuringRun { get; } = [];
+
+        public static void Reset()
+        {
+            DuringHook.Clear();
+            DuringKey.Clear();
+            DuringRun.Clear();
+        }
+    }
+
+    public interface IObservingTrain : IServiceTrain<ObservingInput, Unit>;
+
+    public class ObservingTrain(IEnqueueContextAccessor accessor)
+        : ServiceTrain<ObservingInput, Unit>,
+            IObservingTrain
+    {
+        protected override string? QueueSubjectKey(Metadata metadata)
+        {
+            ObservingProbe.DuringKey.Add(accessor.Current is not null);
+            return null;
+        }
+
+        protected override Task OnQueue(Metadata metadata, CancellationToken ct)
+        {
+            ObservingProbe.DuringHook.Add(accessor.Current is not null);
+            return Task.CompletedTask;
+        }
+
+        protected override Task<Either<Exception, Unit>> Junctions()
+        {
+            ObservingProbe.DuringRun.Add(accessor.Current is not null);
+            return Task.FromResult<Either<Exception, Unit>>(Unit.Default);
+        }
     }
 
     private static WorkQueue Marker(string suffix) =>

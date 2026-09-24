@@ -3,6 +3,7 @@ using FluentAssertions;
 using LanguageExt;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Trax.Effect.Data.Services.EnqueueContext;
 using Trax.Effect.Data.Services.IDataContextFactory;
 using Trax.Effect.Models.Metadata;
 using Trax.Effect.Models.WorkQueue;
@@ -104,17 +105,40 @@ public class QueueInputTests : TestSetup
     [Test]
     public async Task A_local_scheduled_time_is_stored_as_utc()
     {
-        var local = DateTime.SpecifyKind(DateTime.Now.AddHours(2), DateTimeKind.Local);
+        // The conversion only shows on a machine whose zone is not UTC, and CI runs in UTC, where
+        // converting and relabelling store the same instant. So the test picks the zone: TZ is
+        // read when the local zone is next computed. Nothing in this assembly runs in parallel.
+        var previousZone = Environment.GetEnvironmentVariable("TZ");
+        Environment.SetEnvironmentVariable("TZ", "Asia/Kolkata");
+        TimeZoneInfo.ClearCachedData();
+        try
+        {
+            var offset = TimeSpan.FromHours(5.5);
+            if (TimeZoneInfo.Local.BaseUtcOffset != offset)
+                Assert.Ignore("this platform does not take its local zone from TZ");
 
-        var result = await Execution.QueueAsync(
-            typeof(IOptionalInputTrain).FullName!,
-            "{}",
-            scheduledAt: local
-        );
+            var instant = new DateTime(2031, 5, 1, 12, 0, 0, DateTimeKind.Utc);
+            var local = DateTime.SpecifyKind(instant + offset, DateTimeKind.Local);
 
-        (await EntryAsync(result.WorkQueueId))
-            .ScheduledAt.Should()
-            .BeCloseTo(local.ToUniversalTime(), TimeSpan.FromSeconds(1));
+            var result = await Execution.QueueAsync(
+                typeof(IOptionalInputTrain).FullName!,
+                "{}",
+                scheduledAt: local
+            );
+
+            (await EntryAsync(result.WorkQueueId))
+                .ScheduledAt.Should()
+                .Be(
+                    instant,
+                    "17:30 in UTC+05:30 is 12:00 UTC; relabelling it as UTC would schedule it "
+                        + "five and a half hours late"
+                );
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("TZ", previousZone);
+            TimeZoneInfo.ClearCachedData();
+        }
     }
 
     [Test]
@@ -143,21 +167,47 @@ public class QueueInputTests : TestSetup
     [Test]
     public async Task Concurrent_enqueues_on_one_scope_do_not_interfere()
     {
+        const int enqueues = 5;
+        ConcurrentHookProbe.Reset(enqueues);
         var execution = Execution;
 
-        var act = async () =>
-            await Task.WhenAll(
-                Enumerable
-                    .Range(0, 5)
-                    .Select(_ =>
-                        Task.Run(() =>
-                            execution.QueueAsync(typeof(IHookedOptionalInputTrain).FullName!, "{}")
-                        )
+        var all = Task.WhenAll(
+            Enumerable
+                .Range(0, enqueues)
+                .Select(_ =>
+                    Task.Run(() =>
+                        execution.QueueAsync(typeof(IConcurrentHookTrain).FullName!, "{}")
                     )
-            );
+                )
+        );
 
+        var act = async () => await all.WaitAsync(TimeSpan.FromSeconds(30));
         await act.Should()
             .NotThrowAsync("a Blazor circuit shares one scope across every enqueue it makes");
+
+        // Every hook waited for the others before reading the context again, so all five were in
+        // flight at once. Each has to have seen a context of its own, and kept it throughout.
+        // Asserted on projections: the contexts are disposed by now and cannot be formatted.
+        ConcurrentHookProbe.Seen.Should().HaveCount(enqueues);
+        ConcurrentHookProbe
+            .Seen.Count(seen => seen.Before is not null && ReferenceEquals(seen.Before, seen.After))
+            .Should()
+            .Be(
+                enqueues,
+                "another enqueue's hook must not replace the context this one is writing through"
+            );
+        ConcurrentHookProbe
+            .Seen.Select(seen => seen.Before)
+            .Distinct(ReferenceEqualityComparer.Instance)
+            .Count()
+            .Should()
+            .Be(enqueues, "each enqueue commits on its own context");
+
+        var factory = Scope.ServiceProvider.GetRequiredService<IDataContextProviderFactory>();
+        using var context = await factory.CreateDbContextAsync(CancellationToken.None);
+        (await context.WorkQueues.CountAsync(w => w.TrainName!.Contains("ConcurrentHookTrain")))
+            .Should()
+            .Be(enqueues, "every enqueue committed its own row");
     }
 
     [Test]
@@ -178,6 +228,61 @@ public class QueueInputTests : TestSetup
     public static class HookProbe
     {
         public static readonly System.Collections.Concurrent.ConcurrentBag<object?> Seen = [];
+    }
+
+    /// <summary>
+    /// Holds each concurrent hook until all of them are running, and records the ambient context
+    /// each one read before and after that wait.
+    /// </summary>
+    public static class ConcurrentHookProbe
+    {
+        private static int _expected;
+        private static int _arrived;
+        private static TaskCompletionSource _allArrived = new();
+
+        public static System.Collections.Concurrent.ConcurrentBag<(
+            object? Before,
+            object? After
+        )> Seen { get; private set; } = [];
+
+        public static void Reset(int expected)
+        {
+            _expected = expected;
+            _arrived = 0;
+            _allArrived = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously
+            );
+            Seen = [];
+        }
+
+        public static Task ArriveAsync(CancellationToken ct)
+        {
+            if (Interlocked.Increment(ref _arrived) == _expected)
+                _allArrived.TrySetResult();
+
+            return _allArrived.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
+        }
+    }
+
+    public record ConcurrentHookInput
+    {
+        public string Label { get; init; } = "default";
+    }
+
+    public interface IConcurrentHookTrain : IServiceTrain<ConcurrentHookInput, Unit>;
+
+    public class ConcurrentHookTrain(IEnqueueContextAccessor accessor)
+        : ServiceTrain<ConcurrentHookInput, Unit>,
+            IConcurrentHookTrain
+    {
+        protected override async Task OnQueue(Metadata metadata, CancellationToken ct)
+        {
+            var before = accessor.Current;
+            await ConcurrentHookProbe.ArriveAsync(ct);
+            ConcurrentHookProbe.Seen.Add((before, accessor.Current));
+        }
+
+        protected override Task<Either<Exception, Unit>> Junctions() => Task.FromResult(Resolve());
     }
 
     public record OptionalInput
