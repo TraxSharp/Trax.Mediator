@@ -2,8 +2,11 @@ using FluentAssertions;
 using LanguageExt;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Trax.Effect.Data.Services.DataContext;
 using Trax.Effect.Data.Services.IDataContextFactory;
+using Trax.Effect.Data.Services.SqlDialect;
 using Trax.Effect.Models.Metadata;
+using Trax.Effect.Models.Metadata.DTOs;
 using Trax.Effect.Models.WorkQueue;
 using Trax.Effect.Services.ServiceTrain;
 using Trax.Mediator.Services.TrainExecution;
@@ -144,20 +147,77 @@ public class SubjectKeyTests : TestSetup
     [Test]
     public async Task A_key_at_the_limit_is_accepted_and_claimable_by_the_index()
     {
-        // Three bytes each in UTF-8, the most a single UTF-16 unit can take.
-        ConfigurableKeyTrain.Key = new string('\u4e2d', 512);
+        // Three bytes each in UTF-8, the most a single UTF-16 unit can take. The characters are
+        // random, not repeated: Postgres compresses a run of one character before it checks the
+        // btree row limit, so a repeated key fits whatever its length and proves nothing. The
+        // seed is fixed so a failure reproduces.
+        var random = new Random(19);
+        var key = new string(
+            Enumerable.Range(0, 512).Select(_ => (char)(0x4E00 + random.Next(20000))).ToArray()
+        );
+        ConfigurableKeyTrain.Key = key;
 
-        var result = await Execution.QueueAsync(typeof(IConfigurableKeyTrain).FullName!, "{}");
+        var first = await Execution.QueueAsync(typeof(IConfigurableKeyTrain).FullName!, "{}");
+        var second = await Execution.QueueAsync(typeof(IConfigurableKeyTrain).FullName!, "{}");
 
-        // Dispatching sets the status the subject index covers, which is where an oversized
-        // key would fail. Doing it here proves the limit leaves room for multi-byte keys.
-        var factory = Scope.ServiceProvider.GetRequiredService<IDataContextProviderFactory>();
-        using var context = await factory.CreateDbContextAsync(CancellationToken.None);
-        var entry = await context.WorkQueues.FirstAsync(w => w.Id == result.WorkQueueId);
-        entry.Status = Trax.Effect.Enums.WorkQueueStatus.Dispatched;
-        var act = async () => await context.SaveChanges(CancellationToken.None);
+        // Claim and dispatch the first entry the way the dispatcher does. Dispatching sets the
+        // status the subject index covers, so this is where an oversized key would fail.
+        (await ClaimAndDispatchAsync(first.WorkQueueId))
+            .Should()
+            .BeTrue("a key at the limit has to survive the dispatcher's claim and index write");
 
-        await act.Should().NotThrowAsync();
+        // The second entry's claim looks its subject up in that index and has to find the run.
+        (await ClaimAndDispatchAsync(second.WorkQueueId))
+            .Should()
+            .BeFalse(
+                "the subject lookup has to match the full 512-character key, or the second "
+                    + "entry would run alongside the first"
+            );
+    }
+
+    /// <summary>
+    /// The dispatcher's claim, in the order <c>DispatchJobsJunction</c> runs it: lock the subject,
+    /// claim through the dialect, create the run's metadata, mark the entry dispatched, commit.
+    /// </summary>
+    private async Task<bool> ClaimAndDispatchAsync(long workQueueId)
+    {
+        using var scope = Scope.ServiceProvider.CreateScope();
+        var dialect = scope.ServiceProvider.GetRequiredService<ISqlDialect>();
+        var dataContext = scope.ServiceProvider.GetRequiredService<IDataContext>();
+        var database = (DbContext)dataContext;
+
+        using var transaction = await dataContext.BeginTransaction(CancellationToken.None);
+        var entry = await dataContext
+            .WorkQueues.AsNoTracking()
+            .FirstAsync(w => w.Id == workQueueId);
+        await database.Database.ExecuteSqlRawAsync(dialect.LockSubject(), [entry.SubjectKey!]);
+
+        var claimed = await dataContext
+            .WorkQueues.FromSqlRaw(dialect.ClaimWorkQueueEntry(), workQueueId)
+            .FirstOrDefaultAsync();
+        if (claimed is null)
+        {
+            await dataContext.RollbackTransaction();
+            return false;
+        }
+
+        var metadata = Metadata.Create(
+            new CreateMetadata
+            {
+                Name = claimed.TrainName,
+                ExternalId = claimed.ExternalId,
+                Input = null,
+            }
+        );
+        await dataContext.Track(metadata);
+        await dataContext.SaveChanges(CancellationToken.None);
+
+        claimed.Status = Trax.Effect.Enums.WorkQueueStatus.Dispatched;
+        claimed.MetadataId = metadata.Id;
+        claimed.DispatchedAt = DateTime.UtcNow;
+        await dataContext.SaveChanges(CancellationToken.None);
+        await dataContext.CommitTransaction();
+        return true;
     }
 
     [Test]
