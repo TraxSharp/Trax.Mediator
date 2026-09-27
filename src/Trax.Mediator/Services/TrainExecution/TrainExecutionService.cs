@@ -68,20 +68,9 @@ public class TrainExecutionService(
         CancellationToken ct = default
     )
     {
-        var registration = FindTrain(trainName);
-        await AuthorizeAsync(registration, ct);
+        var (registration, input) = await PrepareCoreAsync(trainName, inputJson, ct);
 
         registration.ServiceType.FullName.AssertLoaded();
-
-        // A run needs an input instance, and the runner refuses an entry that has none, so
-        // storing null only deferred the failure to dispatch, where nobody who could fix it would
-        // see it. No input is read as an empty object instead, which is refused here when the
-        // input type needs values (see DeserializeInput).
-        var missing = string.IsNullOrWhiteSpace(inputJson);
-        var json = missing ? EmptyInput : inputJson!;
-
-        EnforceInputSizeCap(json, registration);
-        var input = DeserializeInput(json, registration, missing);
 
         var serializedInput = JsonSerializer.Serialize(
             input,
@@ -162,15 +151,7 @@ public class TrainExecutionService(
         CancellationToken ct = default
     )
     {
-        var registration = FindTrain(trainName);
-        await AuthorizeAsync(registration, ct);
-
-        // Read the same way QueueAsync reads it, so the two methods agree on a missing input.
-        var missing = string.IsNullOrWhiteSpace(inputJson);
-        var json = missing ? EmptyInput : inputJson!;
-
-        EnforceInputSizeCap(json, registration);
-        var input = DeserializeInput(json, registration, missing);
+        var (registration, input) = await PrepareCoreAsync(trainName, inputJson, ct);
 
         registration.ServiceType.FullName.AssertLoaded();
 
@@ -185,6 +166,43 @@ public class TrainExecutionService(
             registration.OutputType,
             ct
         );
+    }
+
+    public async Task<PreparedTrain> PrepareAsync(
+        string trainName,
+        string? inputJson,
+        CancellationToken ct = default
+    )
+    {
+        var (registration, input) = await PrepareCoreAsync(trainName, inputJson, ct);
+        return new PreparedTrain(registration, input);
+    }
+
+    /// <summary>
+    /// The lookup, authorization and input reading every entry point shares, so a queue, a run and
+    /// a surface that submits work itself agree on the same name and JSON.
+    /// </summary>
+    private async Task<(TrainRegistration Registration, object Input)> PrepareCoreAsync(
+        string trainName,
+        string? inputJson,
+        CancellationToken ct
+    )
+    {
+        var registration = FindTrain(trainName);
+
+        // Before the input is read, so a caller who may not use the train learns nothing about
+        // its input from a parse error.
+        await AuthorizeAsync(registration, ct);
+
+        // A run needs an input instance, and the runner refuses an entry that has none, so
+        // storing null only deferred the failure to dispatch, where nobody who could fix it would
+        // see it. No input is read as an empty object instead, which is refused here when the
+        // input type needs values (see DeserializeInput).
+        var missing = string.IsNullOrWhiteSpace(inputJson);
+        var json = missing ? EmptyInput : inputJson!;
+
+        EnforceInputSizeCap(json, registration);
+        return (registration, DeserializeInput(json, registration, missing));
     }
 
     /// <summary>
