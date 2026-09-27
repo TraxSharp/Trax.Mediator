@@ -680,7 +680,7 @@ public class TrainExecutionService(
                 input = JsonSerializer.Deserialize(
                     inputJson,
                     registration.InputType,
-                    EmptyInputOptions()
+                    InputOptions().Missing
                 );
             }
             catch (JsonException refused)
@@ -697,7 +697,7 @@ public class TrainExecutionService(
             input = JsonSerializer.Deserialize(
                 inputJson,
                 registration.InputType,
-                TraxEffectConfiguration.StaticSystemJsonSerializerOptions
+                InputOptions().Given
             );
         }
 
@@ -711,25 +711,41 @@ public class TrainExecutionService(
         return input;
     }
 
-    private static (JsonSerializerOptions Source, JsonSerializerOptions Strict)? _emptyInputOptions;
+    private static CallerInputOptions? _inputOptions;
 
     /// <summary>
-    /// The system options with required constructor parameters respected, rebuilt only if the
-    /// system options object itself is replaced.
+    /// How a caller's input is read: the system options, with property names matched whatever
+    /// their case and a property given twice (in any casing) refused, so the API and the
+    /// dashboard accept the same JSON and ambiguous input is never resolved silently to its last
+    /// value (Trax.Docs/adr/0023). The missing-input reading also respects required constructor
+    /// parameters. Rebuilt only if the system options object itself is replaced.
     /// </summary>
-    private static JsonSerializerOptions EmptyInputOptions()
+    private static CallerInputOptions InputOptions()
     {
         var source = TraxEffectConfiguration.StaticSystemJsonSerializerOptions;
-        var cached = _emptyInputOptions;
+        var cached = _inputOptions;
 
-        if (cached is { } hit && ReferenceEquals(hit.Source, source))
-            return hit.Strict;
+        if (cached is not null && ReferenceEquals(cached.Source, source))
+            return cached;
 
-        var strict = new JsonSerializerOptions(source)
+        var given = new JsonSerializerOptions(source)
+        {
+            PropertyNameCaseInsensitive = true,
+            AllowDuplicateProperties = false,
+        };
+        var missing = new JsonSerializerOptions(given)
         {
             RespectRequiredConstructorParameters = true,
         };
-        _emptyInputOptions = (source, strict);
-        return strict;
+
+        var built = new CallerInputOptions(source, given, missing);
+        _inputOptions = built;
+        return built;
     }
+
+    private sealed record CallerInputOptions(
+        JsonSerializerOptions Source,
+        JsonSerializerOptions Given,
+        JsonSerializerOptions Missing
+    );
 }
