@@ -68,6 +68,12 @@ public class TrainExecutionService(
     /// </summary>
     private static readonly AsyncLocal<JoinableEnqueue?> RunningEnqueue = new();
 
+    /// <summary>
+    /// Per-train-type cache of <c>ServiceTrain.EnterQueueHooks</c>, which the enqueue calls around
+    /// both queue hooks. Only read for a train that overrides one of them.
+    /// </summary>
+    private static readonly ConcurrentDictionary<Type, MethodInfo> EnterQueueHooksCache = new();
+
     public async Task<QueueTrainResult> QueueAsync(
         string trainName,
         string? inputJson,
@@ -370,7 +376,8 @@ public class TrainExecutionService(
 
         try
         {
-            key = (string?)subjectKey.Invoke(train.Instance, [keyMetadata]);
+            using (train.EnterQueueHooks(keyMetadata))
+                key = (string?)subjectKey.Invoke(train.Instance, [keyMetadata]);
         }
         catch (TargetInvocationException ex)
         {
@@ -679,6 +686,10 @@ public class TrainExecutionService(
             }
         );
 
+        // Entered here, in the method that awaits the hook, so the input flows with the hook's
+        // own continuations and is gone once it returns (central ADR 0021).
+        using var hookInput = train.EnterQueueHooks(hookMetadata);
+
         try
         {
             await (Task)onQueue.Invoke(train.Instance, [hookMetadata, ct])!;
@@ -893,6 +904,39 @@ public class TrainExecutionService(
                     registration.ServiceType
                 );
                 return _instance;
+            }
+        }
+
+        /// <summary>
+        /// Hands the train the input <paramref name="metadata"/> carries, so <c>TrainInput</c>
+        /// reads it inside <c>QueueSubjectKey</c> and <c>OnQueue</c> until the returned scope is
+        /// disposed. Never assigns the train's <c>Metadata</c>: a later run on the same instance
+        /// initializes its own (central ADR 0021).
+        /// </summary>
+        public IDisposable EnterQueueHooks(Metadata metadata)
+        {
+            var enter = EnterQueueHooksCache.GetOrAdd(
+                registration.ImplementationType,
+                static type =>
+                    type.GetMethod(
+                        nameof(ServiceTrain<object, object>.EnterQueueHooks),
+                        BindingFlags.Instance | BindingFlags.Public,
+                        [typeof(Metadata)]
+                    )
+                    ?? throw new InvalidOperationException(
+                        $"{type.FullName} has no EnterQueueHooks(Metadata); every ServiceTrain "
+                            + "does, so this train does not derive from one."
+                    )
+            );
+
+            try
+            {
+                return (IDisposable)enter.Invoke(Instance, [metadata])!;
+            }
+            catch (TargetInvocationException ex)
+            {
+                ExceptionDispatchInfo.Throw(ex.InnerException ?? ex);
+                throw;
             }
         }
 
