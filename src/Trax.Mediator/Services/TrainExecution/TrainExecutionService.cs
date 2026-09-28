@@ -39,26 +39,11 @@ public class TrainExecutionService(
 ) : ITrainExecutionService
 {
     /// <summary>
-    /// Per-train-type cache of the concrete train's overridden <c>OnQueue</c> method, or null when
-    /// the train does not override it. Trains that do not override it (the common case) skip
-    /// resolution entirely, so the enqueue path stays as light as it was before the hook existed.
-    /// The reflection runs once per type.
-    /// </summary>
-    private static readonly ConcurrentDictionary<Type, MethodInfo?> OnQueueOverrideCache = new();
-
-    /// <summary>
     /// Per-train-type cache of the concrete train's <c>DeferQueuePromotion</c> property. Only read
     /// for trains that actually override <c>OnQueue</c> — deferring promotion without a hook would
     /// stage an entry with nothing to wait for.
     /// </summary>
     private static readonly ConcurrentDictionary<Type, PropertyInfo?> DeferPromotionCache = new();
-
-    /// <summary>
-    /// Per-train-type cache of the concrete train's overridden <c>QueueSubjectKey</c> method, or
-    /// null when the train does not override it. Trains that do not override it are never resolved
-    /// for it, so the common enqueue path is unchanged.
-    /// </summary>
-    private static readonly ConcurrentDictionary<Type, MethodInfo?> SubjectKeyOverrideCache = new();
 
     public async Task<QueueTrainResult> QueueAsync(
         string trainName,
@@ -68,20 +53,9 @@ public class TrainExecutionService(
         CancellationToken ct = default
     )
     {
-        var registration = FindTrain(trainName);
-        await AuthorizeAsync(registration, ct);
+        var (registration, input) = await PrepareCoreAsync(trainName, inputJson, ct);
 
         registration.ServiceType.FullName.AssertLoaded();
-
-        // A run needs an input instance, and the runner refuses an entry that has none, so
-        // storing null only deferred the failure to dispatch, where nobody who could fix it would
-        // see it. No input is read as an empty object instead, which is refused here when the
-        // input type needs values (see DeserializeInput).
-        var missing = string.IsNullOrWhiteSpace(inputJson);
-        var json = missing ? EmptyInput : inputJson!;
-
-        EnforceInputSizeCap(json, registration);
-        var input = DeserializeInput(json, registration, missing);
 
         var serializedInput = JsonSerializer.Serialize(
             input,
@@ -170,15 +144,7 @@ public class TrainExecutionService(
         CancellationToken ct = default
     )
     {
-        var registration = FindTrain(trainName);
-        await AuthorizeAsync(registration, ct);
-
-        // Read the same way QueueAsync reads it, so the two methods agree on a missing input.
-        var missing = string.IsNullOrWhiteSpace(inputJson);
-        var json = missing ? EmptyInput : inputJson!;
-
-        EnforceInputSizeCap(json, registration);
-        var input = DeserializeInput(json, registration, missing);
+        var (registration, input) = await PrepareCoreAsync(trainName, inputJson, ct);
 
         registration.ServiceType.FullName.AssertLoaded();
 
@@ -193,6 +159,43 @@ public class TrainExecutionService(
             registration.OutputType,
             ct
         );
+    }
+
+    public async Task<PreparedTrain> PrepareAsync(
+        string trainName,
+        string? inputJson,
+        CancellationToken ct = default
+    )
+    {
+        var (registration, input) = await PrepareCoreAsync(trainName, inputJson, ct);
+        return new PreparedTrain(registration, input);
+    }
+
+    /// <summary>
+    /// The lookup, authorization and input reading every entry point shares, so a queue, a run and
+    /// a surface that submits work itself agree on the same name and JSON.
+    /// </summary>
+    private async Task<(TrainRegistration Registration, object Input)> PrepareCoreAsync(
+        string trainName,
+        string? inputJson,
+        CancellationToken ct
+    )
+    {
+        var registration = FindTrain(trainName);
+
+        // Before the input is read, so a caller who may not use the train learns nothing about
+        // its input from a parse error.
+        await AuthorizeAsync(registration, ct);
+
+        // A run needs an input instance, and the runner refuses an entry that has none, so
+        // storing null only deferred the failure to dispatch, where nobody who could fix it would
+        // see it. No input is read as an empty object instead, which is refused here when the
+        // input type needs values (see DeserializeInput).
+        var missing = string.IsNullOrWhiteSpace(inputJson);
+        var json = missing ? EmptyInput : inputJson!;
+
+        EnforceInputSizeCap(json, registration);
+        return (registration, DeserializeInput(json, registration, missing));
     }
 
     /// <summary>
@@ -211,24 +214,9 @@ public class TrainExecutionService(
         string externalId
     )
     {
-        var subjectKey = SubjectKeyOverrideCache.GetOrAdd(
-            registration.ImplementationType,
-            static type =>
-            {
-                var method = type.GetMethod(
-                    "QueueSubjectKey",
-                    BindingFlags.Instance | BindingFlags.NonPublic,
-                    [typeof(Metadata)]
-                );
-
-                var declaringType = method?.DeclaringType;
-                if (declaringType is { IsGenericType: true })
-                    declaringType = declaringType.GetGenericTypeDefinition();
-
-                // Only a concrete override counts — the base returns null for every train.
-                return declaringType != typeof(ServiceTrain<,>) ? method : null;
-            }
-        );
+        // Trains that do not override it are never resolved for it, so the common enqueue path
+        // is unchanged. Discovery reports the same answer as TrainRegistration.HasQueueSubjectKey.
+        var subjectKey = QueueMemberOverrides.QueueSubjectKey(registration.ImplementationType);
 
         if (subjectKey is null)
             return null;
@@ -574,27 +562,12 @@ public class TrainExecutionService(
 
     /// <summary>
     /// Returns the train's overridden <c>OnQueue</c> method, or null when the train does not
-    /// override the no-op <c>ServiceTrain&lt;,&gt;.OnQueue</c>. Cached per type; the reflection
-    /// runs once.
+    /// override the no-op <c>ServiceTrain&lt;,&gt;.OnQueue</c>. Trains that do not override it (the
+    /// common case) skip resolution entirely, so the enqueue path stays as light as it was before
+    /// the hook existed.
     /// </summary>
     private static MethodInfo? ResolveOnQueueOverride(Type implementationType) =>
-        OnQueueOverrideCache.GetOrAdd(
-            implementationType,
-            static type =>
-            {
-                var method = type.GetMethod(
-                    "OnQueue",
-                    BindingFlags.Instance | BindingFlags.NonPublic,
-                    [typeof(Metadata), typeof(CancellationToken)]
-                );
-
-                var declaringType = method?.DeclaringType;
-                if (declaringType is { IsGenericType: true })
-                    declaringType = declaringType.GetGenericTypeDefinition();
-
-                return declaringType != typeof(ServiceTrain<,>) ? method : null;
-            }
-        );
+        QueueMemberOverrides.OnQueue(implementationType);
 
     private async Task AuthorizeAsync(TrainRegistration registration, CancellationToken ct)
     {
@@ -689,7 +662,7 @@ public class TrainExecutionService(
                 input = JsonSerializer.Deserialize(
                     inputJson,
                     registration.InputType,
-                    EmptyInputOptions()
+                    InputOptions().Missing
                 );
             }
             catch (JsonException refused)
@@ -706,7 +679,7 @@ public class TrainExecutionService(
             input = JsonSerializer.Deserialize(
                 inputJson,
                 registration.InputType,
-                TraxEffectConfiguration.StaticSystemJsonSerializerOptions
+                InputOptions().Given
             );
         }
 
@@ -720,25 +693,41 @@ public class TrainExecutionService(
         return input;
     }
 
-    private static (JsonSerializerOptions Source, JsonSerializerOptions Strict)? _emptyInputOptions;
+    private static CallerInputOptions? _inputOptions;
 
     /// <summary>
-    /// The system options with required constructor parameters respected, rebuilt only if the
-    /// system options object itself is replaced.
+    /// How a caller's input is read: the system options, with property names matched whatever
+    /// their case and a property given twice (in any casing) refused, so the API and the
+    /// dashboard accept the same JSON and ambiguous input is never resolved silently to its last
+    /// value (Trax.Docs/adr/0023). The missing-input reading also respects required constructor
+    /// parameters. Rebuilt only if the system options object itself is replaced.
     /// </summary>
-    private static JsonSerializerOptions EmptyInputOptions()
+    private static CallerInputOptions InputOptions()
     {
         var source = TraxEffectConfiguration.StaticSystemJsonSerializerOptions;
-        var cached = _emptyInputOptions;
+        var cached = _inputOptions;
 
-        if (cached is { } hit && ReferenceEquals(hit.Source, source))
-            return hit.Strict;
+        if (cached is not null && ReferenceEquals(cached.Source, source))
+            return cached;
 
-        var strict = new JsonSerializerOptions(source)
+        var given = new JsonSerializerOptions(source)
+        {
+            PropertyNameCaseInsensitive = true,
+            AllowDuplicateProperties = false,
+        };
+        var missing = new JsonSerializerOptions(given)
         {
             RespectRequiredConstructorParameters = true,
         };
-        _emptyInputOptions = (source, strict);
-        return strict;
+
+        var built = new CallerInputOptions(source, given, missing);
+        _inputOptions = built;
+        return built;
     }
+
+    private sealed record CallerInputOptions(
+        JsonSerializerOptions Source,
+        JsonSerializerOptions Given,
+        JsonSerializerOptions Missing
+    );
 }
