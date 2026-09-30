@@ -144,6 +144,8 @@ namespace Trax.Mediator.Services.TrainBus
         System.Threading.Tasks.Task RunAsync(object trainInput, System.Threading.CancellationToken cancellationToken, Trax.Effect.Models.Metadata.Metadata? metadata = null);
         System.Threading.Tasks.Task<TOut> RunAsync<TOut>(object trainInput, Trax.Effect.Models.Metadata.Metadata? metadata = null);
         System.Threading.Tasks.Task<TOut> RunAsync<TOut>(object trainInput, System.Threading.CancellationToken cancellationToken, Trax.Effect.Models.Metadata.Metadata? metadata = null);
+        System.Threading.Tasks.Task RunByNameAsync(string trainName, object trainInput, System.Threading.CancellationToken cancellationToken, Trax.Effect.Models.Metadata.Metadata? metadata = null);
+        System.Threading.Tasks.Task<TOut> RunByNameAsync<TOut>(string trainName, object trainInput, System.Threading.CancellationToken cancellationToken, Trax.Effect.Models.Metadata.Metadata? metadata = null);
     }
 }
 namespace Trax.Mediator.Services.TrainDiscovery

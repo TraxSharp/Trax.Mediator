@@ -673,10 +673,10 @@ public class TrainExecutionService(
     /// Exceptions are intentionally not caught: a failed <c>OnQueue</c> aborts the enqueue.
     /// </summary>
     /// <remarks>
-    /// The hook is invoked via reflection rather than a marker interface on purpose: a non-generic
-    /// interface on <c>ServiceTrain&lt;,&gt;</c> would collide with the canonical-interface
-    /// selection in train discovery (it picks the first non-generic interface), so every train
-    /// could register under the marker instead of its own interface.
+    /// The hook is invoked via reflection, not through a marker interface. Registration would not
+    /// mistake a marker for the train's service type, since it selects the interface that derives
+    /// from <c>IServiceTrain&lt;,&gt;</c>, but reflection finds only trains that override the
+    /// hook, so a train without one is never resolved for it.
     /// </remarks>
     private static async Task InvokeQueueHookAsync(
         TrainRegistration registration,

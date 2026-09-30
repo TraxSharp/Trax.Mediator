@@ -49,7 +49,7 @@ namespace Trax.Mediator.Services.TrainBus;
 /// <param name="serviceProvider">The service provider used to resolve train instances for <see cref="InitializeTrain"/></param>
 /// <param name="scopeFactory">Factory for creating child scopes per <c>RunAsync</c> call</param>
 /// <param name="registryService">The registry service that maps input types to train types</param>
-internal class TrainBus(
+internal partial class TrainBus(
     IServiceProvider serviceProvider,
     IServiceScopeFactory scopeFactory,
     ITrainRegistry registryService
@@ -302,31 +302,6 @@ internal class TrainBus(
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var trainService = InitializeTrainFromProvider(scope.ServiceProvider, trainInput);
-
-        return await RunResolvedAsync<TOut>(trainService, trainInput, metadata, cancellationToken);
-    }
-
-    /// <summary>
-    /// Runs the train registered for the input's runtime type as a <c>Pending</c> record that
-    /// <paramref name="createPendingMetadata"/> writes only once the train has been resolved, so
-    /// a train that cannot be built (no registration, a dependency missing from DI) leaves no
-    /// record behind. Used by <see cref="RunExecutor.LocalRunExecutor"/>.
-    /// </summary>
-    /// <param name="trainInput">The input; its runtime type selects the train.</param>
-    /// <param name="createPendingMetadata">
-    /// Writes and returns the <c>Pending</c> record the train runs as. Called after resolution
-    /// and before the train runs.
-    /// </param>
-    /// <param name="cancellationToken">Passed to <paramref name="createPendingMetadata"/> and the train.</param>
-    internal async Task<TOut> RunAsPendingAsync<TOut>(
-        object trainInput,
-        Func<CancellationToken, Task<Metadata>> createPendingMetadata,
-        CancellationToken cancellationToken
-    )
-    {
-        await using var scope = scopeFactory.CreateAsyncScope();
-        var trainService = InitializeTrainFromProvider(scope.ServiceProvider, trainInput);
-        var metadata = await createPendingMetadata(cancellationToken);
 
         return await RunResolvedAsync<TOut>(trainService, trainInput, metadata, cancellationToken);
     }
