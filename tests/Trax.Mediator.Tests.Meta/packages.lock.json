@@ -82,6 +82,16 @@
           "System.CodeDom": "6.0.0"
         }
       },
+      "Trax.Core.Testing": {
+        "type": "Direct",
+        "requested": "[1.7.6, )",
+        "resolved": "1.7.6",
+        "contentHash": "Zm9HGgVp6+ts9rBo+n3DJnlrWiPuhD1mIGU1UHV5oBGlpACiDiZrC7wVjyrZ5kikf/Kd/+MLbbchaHhINL+cgg==",
+        "dependencies": {
+          "Microsoft.CodeAnalysis.CSharp": "5.9.0",
+          "NUnit": "4.4.0"
+        }
+      },
       "Trax.Effect.Data.InMemory": {
         "type": "Direct",
         "requested": "[1.57.3, )",
