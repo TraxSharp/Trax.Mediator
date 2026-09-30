@@ -722,9 +722,11 @@ public class TrainExecutionService(
     /// connection (mediator/0004).
     /// </summary>
     /// <remarks>
-    /// A hook still running after that has lost its enqueue: an enqueue it starts is refused
-    /// rather than committing on its own, because the caller was told this one failed. Whatever it
-    /// later throws is logged, since nobody is left to observe it.
+    /// The enqueue also stops waiting when the caller cancels, and the hook may still be running
+    /// then too. Either way, a hook still running after its enqueue stopped waiting has lost that
+    /// enqueue: an enqueue it starts is refused rather than committing on its own, because the
+    /// caller was told this one failed. Whatever it later throws is logged, since nobody is left
+    /// to observe it.
     /// </remarks>
     private async Task InvokeQueueHookWithinLimitAsync(
         TrainRegistration registration,
@@ -767,22 +769,52 @@ public class TrainExecutionService(
                 limit
             );
 
-            if (!hook.IsCompleted)
-                _ = hook.ContinueWith(
-                    abandoned =>
-                        logger?.LogWarning(
-                            abandoned.Exception,
-                            "{Train}.OnQueue threw after its enqueue had already failed on "
-                                + "MaxQueueHookDuration.",
-                            trainName
-                        ),
-                    CancellationToken.None,
-                    TaskContinuationOptions.OnlyOnFaulted,
-                    TaskScheduler.Default
-                );
+            LogWhenAbandonedHookFaults(hook, trainName, logger, "failed on MaxQueueHookDuration");
 
             throw new QueueHookTimeoutException(trainName, limit);
         }
+        catch (OperationCanceledException) when (!hook.IsCompleted)
+        {
+            // The caller cancelled, and the hook has not stopped. The caller is told the enqueue
+            // failed and the transaction rolls back, so the hook has nothing left to join: an
+            // enqueue it starts from here on is refused, the same as after the limit.
+            joinable?.Abandon();
+
+            var trainName = registration.ServiceType.FullName ?? registration.ServiceTypeName;
+            var logger = serviceProvider.GetService<ILogger<TrainExecutionService>>();
+
+            LogWhenAbandonedHookFaults(hook, trainName, logger, "been cancelled by its caller");
+
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Logs what a hook throws after its enqueue stopped waiting for it, since nothing else
+    /// observes that task any more.
+    /// </summary>
+    private static void LogWhenAbandonedHookFaults(
+        Task hook,
+        string trainName,
+        ILogger? logger,
+        string outcome
+    )
+    {
+        if (hook.IsCompleted)
+            return;
+
+        _ = hook.ContinueWith(
+            abandoned =>
+                logger?.LogWarning(
+                    abandoned.Exception,
+                    "{Train}.OnQueue threw after its enqueue had already {Outcome}.",
+                    trainName,
+                    outcome
+                ),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default
+        );
     }
 
     /// <summary>
@@ -1071,9 +1103,10 @@ public class TrainExecutionService(
                 if (_abandoned)
                     throw new InvalidOperationException(
                         "This enqueue was started from an OnQueue hook whose own enqueue already "
-                            + "failed on MaxQueueHookDuration and was rolled back, so there is "
-                            + "nothing for it to join, and committing on its own would queue work "
-                            + "for a mutation the caller was told failed."
+                            + "failed while the hook was still running (it ran past "
+                            + "MaxQueueHookDuration, or its caller cancelled) and was rolled back, "
+                            + "so there is nothing for it to join, and committing on its own would "
+                            + "queue work for a mutation the caller was told failed."
                     );
 
                 if (_closed)
@@ -1112,8 +1145,9 @@ public class TrainExecutionService(
         }
 
         /// <summary>
-        /// Ends joining for good: the outer hook ran past its limit and the enqueue failed while
-        /// it was still running, so anything it enqueues from now on is refused.
+        /// Ends joining for good: the enqueue stopped waiting for the outer hook while it was
+        /// still running (the hook ran past its limit, or the caller cancelled), so anything it
+        /// enqueues from now on is refused.
         /// </summary>
         public void Abandon()
         {
