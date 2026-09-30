@@ -202,6 +202,11 @@ namespace Trax.Mediator.Services.TrainExecution
         public System.Threading.Tasks.Task<Trax.Mediator.Services.TrainExecution.QueueTrainResult> QueueAsync(string trainName, string? inputJson, int priority = 0, System.DateTime? scheduledAt = default, System.Threading.CancellationToken ct = default) { }
         public System.Threading.Tasks.Task<Trax.Mediator.Services.TrainExecution.RunTrainResult> RunAsync(string trainName, string inputJson, System.Threading.CancellationToken ct = default) { }
     }
+    public static class TrainInputReader
+    {
+        public const int StoredInputGrowthFactor = 4;
+        public static object Read(string? inputJson, Trax.Mediator.Services.TrainDiscovery.TrainRegistration registration, int maxInputJsonBytes) { }
+    }
 }
 namespace Trax.Mediator.Services.TrainRegistry
 {
