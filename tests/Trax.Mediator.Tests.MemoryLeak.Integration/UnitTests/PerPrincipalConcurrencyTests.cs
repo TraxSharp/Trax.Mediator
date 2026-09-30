@@ -99,6 +99,39 @@ public class PerPrincipalConcurrencyTests
     }
 
     [Test]
+    public async Task ACancelledGlobalWait_HandsBackThePrincipalSlotItHeld()
+    {
+        var config = new MediatorConfiguration
+        {
+            PerPrincipalMaxConcurrentRun = 1,
+            GlobalMaxConcurrentRun = 1,
+        };
+        var principal = new StubPrincipal { CurrentId = "bob" };
+        var limiter = new ConcurrencyLimiter(config, new StubDiscovery(), principal);
+        var train = typeof(IFakeTrain).FullName!;
+
+        // Bob holds the only global slot.
+        var bob = await limiter.AcquireAsync(train, CancellationToken.None);
+
+        // Alice's first run takes her one slot and waits for the global one; her second waits
+        // for her slot behind it.
+        principal.CurrentId = "alice";
+        using var cancelFirst = new CancellationTokenSource();
+        var first = limiter.AcquireAsync(train, cancelFirst.Token);
+        var second = limiter.AcquireAsync(train, CancellationToken.None);
+
+        await cancelFirst.CancelAsync();
+        await FluentActions.Awaiting(() => first).Should().ThrowAsync<OperationCanceledException>();
+
+        bob.Dispose();
+
+        using var secondPermit = await second.WaitAsync(TimeSpan.FromSeconds(5));
+        limiter
+            .PerPrincipalEntryCount.Should()
+            .Be(1, "alice's second run holds her slot, which the cancelled run gave back");
+    }
+
+    [Test]
     public async Task SamePrincipal_OverCap_BlocksUntilRelease()
     {
         var config = new MediatorConfiguration { PerPrincipalMaxConcurrentRun = 2 };

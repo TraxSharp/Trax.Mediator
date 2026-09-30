@@ -1,5 +1,7 @@
+using System.Reflection;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Trax.Mediator.Extensions;
 
 namespace Trax.Mediator.Tests.Meta.Tests;
 
@@ -114,6 +116,39 @@ public class BuilderOrderDiagnosticsTests
                 "the documented order must still bind to the real method with no error, warning "
                     + "or ambiguity introduced by the wrong-order overloads"
             );
+    }
+
+    private static IEnumerable<TestCaseData> WrongOrderOverloads() =>
+        typeof(BuilderOrderExtensions)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Select(method =>
+                new TestCaseData(method).SetName(
+                    $"{method.Name}({string.Join(", ", method.GetParameters().Select(p => p.ParameterType.Name))})"
+                )
+            );
+
+    /// <summary>
+    /// A call the compiler refuses can still be made through reflection or <c>dynamic</c>, which
+    /// bind at run time and ignore <c>[Obsolete]</c>. Such a call gets the same instruction as the
+    /// compile error, and every public member of the class is one of these refusals.
+    /// </summary>
+    [TestCaseSource(nameof(WrongOrderOverloads))]
+    public void WrongOrderOverload_CalledAtRunTime_ThrowsTheSameInstruction(MethodInfo method)
+    {
+        var obsolete = method.GetCustomAttribute<ObsoleteAttribute>();
+
+        obsolete
+            .Should()
+            .NotBeNull("every public member of BuilderOrderExtensions exists only to be refused");
+        obsolete!.IsError.Should().BeTrue();
+
+        var call = () => method.Invoke(null, new object?[method.GetParameters().Length]);
+
+        call.Should()
+            .Throw<TargetInvocationException>()
+            .WithInnerException<InvalidOperationException>()
+            .Which.Message.Should()
+            .Be(obsolete.Message, "the run-time refusal says the same thing as the compile error");
     }
 
     private static List<string> Compile(string body)

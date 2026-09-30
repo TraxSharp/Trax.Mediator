@@ -95,12 +95,15 @@ public class TrainChainStartupValidatorTests
         }
     }
 
-    private static TrainRegistration Registration<TService, TTrain>() =>
+    private static TrainRegistration Registration<TService, TTrain>(
+        Type? implementationType = null,
+        Type? inputType = null
+    ) =>
         new()
         {
             ServiceType = typeof(TService),
-            ImplementationType = typeof(TTrain),
-            InputType = typeof(ChainProbeInput),
+            ImplementationType = implementationType ?? typeof(TTrain),
+            InputType = inputType ?? typeof(ChainProbeInput),
             OutputType = typeof(bool),
             Lifetime = ServiceLifetime.Scoped,
             ServiceTypeName = typeof(TService).Name,
@@ -329,7 +332,7 @@ public class TrainChainStartupValidatorTests
         // BrokenFlowTrain's first junction needs an int that is not in Memory, so the check asks
         // the container for one, and that question is what throws here.
         var failure = await Start<IBrokenFlowTrain, BrokenFlowTrain>(
-            wrapScopes: scopes => new ThrowingIsServiceScopeFactory(scopes)
+            wrapScopes: scopes => new ReplacedIsServiceScopeFactory(scopes, new ThrowingIsService())
         );
 
         failure.Should().BeOfType<TrainException>();
@@ -461,6 +464,156 @@ public class TrainChainStartupValidatorTests
             .And.Contain(nameof(TwoConstructorJunction));
     }
 
+    [Test]
+    public async Task Startup_WhenATrainNeedsSeveralUnregisteredServices_NamesEachOneReadably()
+    {
+        var failure = await Start<INeedsSeveralUnregisteredTrain, NeedsSeveralUnregisteredTrain>();
+
+        failure.Should().BeOfType<TrainException>();
+        failure!
+            .Message.Should()
+            .Contain(
+                $"{nameof(INeedsSeveralUnregisteredTrain)} cannot be built: its constructor needs "
+                    + $"'{nameof(IUnregisteredProbeService)}', 'IGenericProbe<Int32>', "
+                    + "'INestedProbe<String>', which are not registered. Register them before "
+                    + "building the host.",
+                "a generic type is written with its arguments rather than as IGenericProbe`1, and "
+                    + "a type nested in a generic one, whose name has no arity marker, still reads"
+            );
+    }
+
+    [Test]
+    public async Task Startup_WhenOnlyADefaultedOrKeyedArgumentIsUnregistered_SkipsRatherThanRefuses()
+    {
+        var logger = new RecordingLogger();
+
+        var failure = await Start<IOptionalArgumentsTrain, OptionalArgumentsTrain>(logger: logger);
+
+        failure
+            .Should()
+            .BeNull(
+                "a defaulted argument need not be registered and a keyed one is not answered by "
+                    + "IsService, so neither is evidence the train can never be built"
+            );
+        logger
+            .Warnings.Should()
+            .ContainSingle()
+            .Which.Should()
+            .Contain(nameof(IOptionalArgumentsTrain))
+            .And.Contain("could not be constructed outside a request");
+    }
+
+    [Test]
+    public async Task Startup_WhenATrainRegisteredOnlyByAFactoryCannotBeBuilt_SkipsIt()
+    {
+        var logger = new RecordingLogger();
+        // What discovery lists for an interface whose only registration is a factory.
+        var registration = Registration<IRequestBoundTrain, RequestBoundTrain>(
+            implementationType: typeof(IRequestBoundTrain)
+        );
+
+        var failure = await StartMany(
+            [(typeof(IRequestBoundTrain), typeof(RequestBoundTrain), registration)],
+            configure: services =>
+                services.AddScoped<IRequestBoundTrain>(_ =>
+                    throw new InvalidOperationException("no HttpContext outside a request")
+                ),
+            logger: logger
+        );
+
+        failure
+            .Should()
+            .BeNull(
+                "there is no constructor to read for a factory, so nothing names a missing type"
+            );
+        logger
+            .Warnings.Should()
+            .ContainSingle()
+            .Which.Should()
+            .Contain(nameof(IRequestBoundTrain))
+            .And.Contain("no HttpContext outside a request");
+    }
+
+    [Test]
+    public async Task Startup_WhenTheContainerCannotSayWhatIsRegistered_SkipsATrainItCannotBuild()
+    {
+        var logger = new RecordingLogger();
+
+        var failure = await Start<INeedsUnregisteredTrain, NeedsUnregisteredTrain>(
+            logger: logger,
+            wrapScopes: scopes => new ReplacedIsServiceScopeFactory(scopes, null)
+        );
+
+        failure
+            .Should()
+            .BeNull(
+                "without IServiceProviderIsService a missing registration cannot be told from a "
+                    + "request-only dependency, and the check only refuses what it can prove"
+            );
+        logger
+            .Warnings.Should()
+            .ContainSingle()
+            .Which.Should()
+            .Contain(nameof(INeedsUnregisteredTrain));
+    }
+
+    [Test]
+    public async Task Startup_WhenTheContainerThrowsAnsweringForATrainItCannotBuild_SkipsIt()
+    {
+        var logger = new RecordingLogger();
+
+        var failure = await Start<INeedsUnregisteredTrain, NeedsUnregisteredTrain>(
+            logger: logger,
+            wrapScopes: scopes => new ReplacedIsServiceScopeFactory(scopes, new ThrowingIsService())
+        );
+
+        failure
+            .Should()
+            .BeNull("a container that cannot answer is not evidence the train cannot run");
+        logger
+            .Warnings.Should()
+            .ContainSingle()
+            .Which.Should()
+            .Contain(nameof(INeedsUnregisteredTrain));
+    }
+
+    [Test]
+    public async Task Startup_WhenAChainEndsWithoutItsResult_NamesTheResolveStep()
+    {
+        var failure = await Start<INoResultTrain, NoResultTrain>();
+
+        failure.Should().BeOfType<TrainException>();
+        failure!
+            .Message.Should()
+            .Contain(
+                $"{nameof(INoResultTrain)}: step 2 (Resolve) the chain ends without",
+                "a step with no junction is named by its kind"
+            );
+    }
+
+    [Test]
+    public async Task Startup_WhenATrainsInputHasMoreThanSevenElements_ReportsTheInputNotAStep()
+    {
+        var registration = Registration<IWideInputTrain, WideInputTrain>(
+            inputType: typeof((int, int, int, int, int, int, int, int))
+        );
+
+        var failure = await StartMany([
+            (typeof(IWideInputTrain), typeof(WideInputTrain), registration),
+        ]);
+
+        failure.Should().BeOfType<TrainException>();
+        failure!
+            .Message.Split(Environment.NewLine)
+            .Should()
+            .Contain(
+                line => line.StartsWith($"  - {nameof(IWideInputTrain)}: the train's input '"),
+                "the fault is about the train's input, which no step number describes"
+            )
+            .Which.Should()
+            .Contain("holds more than seven elements");
+    }
+
     /// <summary>Keeps the warnings the validator logs, so a skip can be told from a pass.</summary>
     public sealed class RecordingLogger : ILogger<TrainChainStartupValidator>
     {
@@ -485,26 +638,31 @@ public class TrainChainStartupValidatorTests
     }
 
     /// <summary>
-    /// Hands the validator scopes whose container answers "is this a service?" by throwing, the
-    /// only way <c>ChainVerification.Verify</c> itself can fail on a well-formed chain.
+    /// Hands the validator scopes whose container answers "is this a service?" through
+    /// <paramref name="isService"/>, or, when that is null, does not offer the question at all.
     /// </summary>
-    private sealed class ThrowingIsServiceScopeFactory(IServiceScopeFactory inner)
-        : IServiceScopeFactory
+    private sealed class ReplacedIsServiceScopeFactory(
+        IServiceScopeFactory inner,
+        IServiceProviderIsService? isService
+    ) : IServiceScopeFactory
     {
-        public IServiceScope CreateScope() => new Scope(inner.CreateScope());
+        public IServiceScope CreateScope() => new Scope(inner.CreateScope(), isService);
 
-        private sealed class Scope(IServiceScope inner) : IServiceScope
+        private sealed class Scope(IServiceScope inner, IServiceProviderIsService? isService)
+            : IServiceScope
         {
-            public IServiceProvider ServiceProvider { get; } = new Provider(inner.ServiceProvider);
+            public IServiceProvider ServiceProvider { get; } =
+                new Provider(inner.ServiceProvider, isService);
 
             public void Dispose() => inner.Dispose();
         }
 
-        private sealed class Provider(IServiceProvider inner) : IServiceProvider
+        private sealed class Provider(IServiceProvider inner, IServiceProviderIsService? isService)
+            : IServiceProvider
         {
             public object? GetService(Type serviceType) =>
                 serviceType == typeof(IServiceProviderIsService)
-                    ? new ThrowingIsService()
+                    ? isService
                     : inner.GetService(serviceType);
         }
     }
@@ -716,5 +874,74 @@ public class TrainChainStartupValidatorTests
     {
         protected override Task<Either<Exception, bool>> Junctions() =>
             Chain<TwoConstructorJunction>().Resolve();
+    }
+
+    public interface IGenericProbe<T>;
+
+    /// <summary>Holds a type whose own name carries no arity marker although it is generic.</summary>
+    public class GenericProbeHolder<T>
+    {
+        public interface INestedProbe;
+    }
+
+    public interface INeedsSeveralUnregisteredTrain : IServiceTrain<ChainProbeInput, bool>;
+
+    public class NeedsSeveralUnregisteredTrain(
+        IUnregisteredProbeService probe,
+        IGenericProbe<int> generic,
+        GenericProbeHolder<string>.INestedProbe nested
+    ) : ServiceTrain<ChainProbeInput, bool>, INeedsSeveralUnregisteredTrain
+    {
+        public object[] Probes { get; } = [probe, generic, nested];
+
+        protected override Task<Either<Exception, bool>> Junctions() =>
+            Chain<TextToNumber>().Chain<NumberToFlag>().Resolve();
+    }
+
+    public interface IKeyedProbe;
+
+    public interface IOptionalArgumentsTrain : IServiceTrain<ChainProbeInput, bool>;
+
+    /// <summary>
+    /// Registered as it is, it cannot be built: the container has no keyed IKeyedProbe. Every
+    /// argument it names is either defaulted or keyed, so none of them is reported missing.
+    /// </summary>
+    public class OptionalArgumentsTrain(
+        [FromKeyedServices("probe")] IKeyedProbe keyed,
+        [ServiceKey] object? key = null,
+        IUnregisteredProbeService? optional = null
+    ) : ServiceTrain<ChainProbeInput, bool>, IOptionalArgumentsTrain
+    {
+        public object?[] Arguments { get; } = [keyed, key, optional];
+
+        protected override Task<Either<Exception, bool>> Junctions() =>
+            Chain<TextToNumber>().Chain<NumberToFlag>().Resolve();
+    }
+
+    public interface INoResultTrain : IServiceTrain<ChainProbeInput, bool>;
+
+    public class NoResultTrain : ServiceTrain<ChainProbeInput, bool>, INoResultTrain
+    {
+        // TextToNumber leaves an int in Memory, and the train returns a bool.
+        protected override Task<Either<Exception, bool>> Junctions() =>
+            Chain<TextToNumber>().Resolve();
+    }
+
+    public interface IWideInputTrain
+        : IServiceTrain<(int, int, int, int, int, int, int, int), bool>;
+
+    /// <summary>Takes eight values as one tuple, one more than Memory can store.</summary>
+    public class WideInputTrain
+        : ServiceTrain<(int, int, int, int, int, int, int, int), bool>,
+            IWideInputTrain
+    {
+        protected override Task<Either<Exception, bool>> Junctions() =>
+            Chain<WideToFlag>().Resolve();
+    }
+
+    private class WideToFlag : Junction<(int, int, int, int, int, int, int, int), bool>
+    {
+        public override Task<bool> Run((int, int, int, int, int, int, int, int) input) =>
+            Task.FromResult(input.Item8 > 0);
     }
 }

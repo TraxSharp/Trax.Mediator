@@ -118,6 +118,77 @@ public class TrainServiceTypeSelectionTests
             .WithMessage($"*{nameof(TwoFacedTrain)}*{nameof(IFirstFace)}*{nameof(ISecondFace)}*");
     }
 
+    [Test]
+    public void TrainServiceType_ClassThatIsNotATrain_IsRefusedNamingIt()
+    {
+        var act = () => TrainServiceType.Select(typeof(NotATrain));
+
+        act.Should()
+            .Throw<Trax.Core.Exceptions.TrainException>()
+            .WithMessage($"Could not find an interface attached to ({nameof(NotATrain)})*");
+    }
+
+    [Test]
+    public void Discovery_ClassWithTwoUnrelatedTrainInterfaces_IsListedUnderItsClass()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient(typeof(TwoFacedTrain), typeof(TwoFacedTrain));
+
+        var registrations = new TrainDiscoveryService(services).DiscoverTrains();
+
+        registrations
+            .Should()
+            .ContainSingle(
+                "discovery lists what is registered; refusing an ambiguous train is the scan's job"
+            )
+            .Which.ServiceType.Should()
+            .Be(typeof(TwoFacedTrain));
+    }
+
+    [Test]
+    public void Discovery_TrainRegisteredUnderABaseClass_IsListedUnderThatBaseClass()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient<IMarkedTrain, MarkedTrain>();
+        services.AddTransient<AuditedTrainBase<MarkedInput, Unit>, MarkedTrain>();
+
+        var registrations = new TrainDiscoveryService(services).DiscoverTrains();
+
+        registrations
+            .Select(r => (r.ServiceType, r.ImplementationType))
+            .Should()
+            .BeEquivalentTo(
+                new[]
+                {
+                    (typeof(IMarkedTrain), typeof(MarkedTrain)),
+                    (typeof(AuditedTrainBase<MarkedInput, Unit>), typeof(MarkedTrain)),
+                },
+                "only a class registered as itself is listed under its own interface; one "
+                    + "registered under a base class is resolved by that base class"
+            );
+    }
+
+    [Test]
+    public void Discovery_FactoryInterfaceThatARegisteredClassImplements_IsNotListedAgain()
+    {
+        // LayeredTrain is listed under its own entry. Its own interface is ILayeredTrain, so the
+        // factory registered for the base interface is not paired with it, and nothing says the
+        // factory builds a LayeredTrain rather than some other class.
+        var services = new ServiceCollection();
+        services.AddTransient<LayeredTrain>();
+        services.AddTransient<ILayeredBaseTrain>(_ => new LayeredTrain());
+
+        var registrations = new TrainDiscoveryService(services).DiscoverTrains();
+
+        registrations
+            .Should()
+            .ContainSingle(
+                "listing the factory's interface could attach one train's attributes to another"
+            )
+            .Which.ServiceType.Should()
+            .Be(typeof(LayeredTrain));
+    }
+
     #region Trains
 
     /// <summary>A marker a team might put on a shared base class for its trains.</summary>
@@ -164,6 +235,9 @@ public class TrainServiceTypeSelectionTests
         protected override Task<Either<Exception, Unit>> Junctions() =>
             Task.FromResult<Either<Exception, Unit>>(Unit.Default);
     }
+
+    /// <summary>A class that implements no train interface.</summary>
+    public class NotATrain;
 
     public record TwoFacedInput;
 

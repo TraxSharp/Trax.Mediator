@@ -3,6 +3,7 @@ using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Trax.Effect.Attributes;
 using Trax.Effect.Data.InMemory.Extensions;
+using Trax.Effect.Data.Services.IDataContextFactory;
 using Trax.Effect.Enums;
 using Trax.Effect.Extensions;
 using Trax.Effect.Models.Metadata;
@@ -186,6 +187,104 @@ public class SharedInputTypeExecutionTests
     }
 
     [Test]
+    public async Task TrainBus_RunByName_NullInput_IsRefused()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var bus = scope.ServiceProvider.GetRequiredService<ITrainBus>();
+
+        var act = () =>
+            bus.RunByNameAsync(typeof(IOpenSharedTrain).FullName!, null!, CancellationToken.None);
+
+        await act.Should()
+            .ThrowAsync<Trax.Core.Exceptions.TrainException>()
+            .WithMessage("trainInput is null*");
+    }
+
+    [Test]
+    public async Task TrainBus_RunByName_MetadataThatIsNotPending_IsRefusedBeforeTheTrainRuns()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var bus = scope.ServiceProvider.GetRequiredService<ITrainBus>();
+        OpenSharedTrain.Runs = 0;
+        var metadata = Metadata.Create(
+            new CreateMetadata
+            {
+                Name = typeof(IOpenSharedTrain).FullName!,
+                ExternalId = Guid.NewGuid().ToString("N"),
+                Input = null,
+            }
+        );
+        metadata.TrainState = TrainState.InProgress;
+
+        var act = () =>
+            bus.RunByNameAsync<SharedOutput>(
+                typeof(IOpenSharedTrain).FullName!,
+                new SharedInput { Value = "x" },
+                CancellationToken.None,
+                metadata
+            );
+
+        await act.Should()
+            .ThrowAsync<Trax.Core.Exceptions.TrainException>()
+            .WithMessage("*state (InProgress), Must be Pending");
+        OpenSharedTrain.Runs.Should().Be(0, "a record another run owns is not a parent link");
+    }
+
+    [Test]
+    public async Task ITrainBus_RunByName_OnABusThatDoesNotImplementIt_ThrowsNotSupported()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        ITrainBus bus = new DelegatingBus(scope.ServiceProvider.GetRequiredService<ITrainBus>());
+
+        var typed = () =>
+            bus.RunByNameAsync<SharedOutput>(
+                typeof(IOpenSharedTrain).FullName!,
+                new SharedInput(),
+                CancellationToken.None
+            );
+        var untyped = () =>
+            bus.RunByNameAsync(
+                typeof(IOpenSharedTrain).FullName!,
+                new SharedInput(),
+                CancellationToken.None
+            );
+
+        // A bus written before the by-name members existed still compiles, and says what it
+        // lacks rather than running whichever train its input type maps to.
+        await typed
+            .Should()
+            .ThrowAsync<NotSupportedException>()
+            .WithMessage($"{nameof(DelegatingBus)} does not implement RunByNameAsync.");
+        await untyped
+            .Should()
+            .ThrowAsync<NotSupportedException>()
+            .WithMessage($"{nameof(DelegatingBus)} does not implement RunByNameAsync.");
+    }
+
+    [Test]
+    public async Task LocalRunExecutor_WithAHostRegisteredBus_RunsByNameAsTheRecordItWrote()
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var bus = new ByNameDelegatingBus(scope.ServiceProvider.GetRequiredService<ITrainBus>());
+        var executor = new LocalRunExecutor(
+            bus,
+            scope.ServiceProvider.GetRequiredService<IDataContextProviderFactory>()
+        );
+
+        var result = await executor.ExecuteAsync(
+            typeof(IOpenSharedTrain).FullName!,
+            new SharedInput { Value = "x" },
+            typeof(SharedOutput)
+        );
+
+        result.Output.Should().Be(new SharedOutput("open"), $"the executor runs by name ({Adr})");
+        bus.Received.Should()
+            .ContainSingle("a bus the host registered is handed the record to run as")
+            .Which.Should()
+            .Be((typeof(IOpenSharedTrain).FullName!, result.MetadataId, TrainState.Pending));
+    }
+
+    [Test]
     public void Discovery_ListsBothTrains_EachPairedWithItsOwnImplementation()
     {
         var discovery = _serviceProvider.GetRequiredService<ITrainDiscoveryService>();
@@ -270,6 +369,99 @@ public class SharedInputTypeExecutionTests
             .HasAuthorizeAttribute.Should()
             .BeTrue();
     }
+
+    [Test]
+    public void Discovery_InterfaceRegisteredOnlyByAFactory_IsListedWithItsOwnRequirements()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient<IGatedSharedTrain>(_ => new GatedSharedTrain());
+
+        var registration = new TrainDiscoveryService(services)
+            .DiscoverTrains()
+            .Should()
+            .ContainSingle()
+            .Subject;
+
+        registration.ServiceType.Should().Be(typeof(IGatedSharedTrain));
+        registration
+            .ImplementationType.Should()
+            .Be(
+                typeof(IGatedSharedTrain),
+                "a factory's class cannot be read without running it, so the interface stands in"
+            );
+        registration
+            .RequiredRoles.Should()
+            .Equal(["Admin"], "the requirements declared on the interface still apply");
+    }
+
+    [Test]
+    public void Discovery_InterfaceRegisteredWithAnInstance_IsPairedWithTheInstancesClass()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IOpenSharedTrain>(new OpenSharedTrain());
+
+        new TrainDiscoveryService(services)
+            .DiscoverTrains()
+            .Should()
+            .ContainSingle()
+            .Which.ImplementationType.Should()
+            .Be(typeof(OpenSharedTrain));
+    }
+
+    #region Buses
+
+    /// <summary>
+    /// A bus a host wrote before <c>RunByNameAsync</c> existed: it implements every member it had
+    /// to then, and inherits the by-name defaults.
+    /// </summary>
+    private class DelegatingBus(ITrainBus inner) : ITrainBus
+    {
+        protected ITrainBus Inner { get; } = inner;
+
+        public Task<TOut> RunAsync<TOut>(object trainInput, Metadata? metadata = null) =>
+            Inner.RunAsync<TOut>(trainInput, metadata);
+
+        public Task<TOut> RunAsync<TOut>(
+            object trainInput,
+            CancellationToken cancellationToken,
+            Metadata? metadata = null
+        ) => Inner.RunAsync<TOut>(trainInput, cancellationToken, metadata);
+
+        public Task RunAsync(object trainInput, Metadata? metadata = null) =>
+            Inner.RunAsync(trainInput, metadata);
+
+        public Task RunAsync(
+            object trainInput,
+            CancellationToken cancellationToken,
+            Metadata? metadata = null
+        ) => Inner.RunAsync(trainInput, cancellationToken, metadata);
+
+        public object InitializeTrain(object trainInput) => Inner.InitializeTrain(trainInput);
+    }
+
+    /// <summary>A host's bus that runs by name, recording the record each run was handed.</summary>
+    private sealed class ByNameDelegatingBus(ITrainBus inner) : DelegatingBus(inner), ITrainBus
+    {
+        public List<(string Name, long MetadataId, TrainState State)> Received { get; } = [];
+
+        public Task<TOut> RunByNameAsync<TOut>(
+            string trainName,
+            object trainInput,
+            CancellationToken cancellationToken,
+            Metadata? metadata = null
+        )
+        {
+            var record =
+                metadata
+                ?? throw new InvalidOperationException(
+                    "LocalRunExecutor hands a host's bus the record to run as"
+                );
+            Received.Add((trainName, record.Id, record.TrainState));
+            return Inner.RunByNameAsync<TOut>(trainName, trainInput, cancellationToken, record);
+        }
+    }
+
+    #endregion
 
     #region Trains
 
