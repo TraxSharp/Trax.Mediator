@@ -44,6 +44,61 @@ public class PerPrincipalConcurrencyTests
     }
 
     [Test]
+    public async Task ManyPrincipals_RunOneAfterAnother_LeaveNoSemaphoreBehind()
+    {
+        var config = new MediatorConfiguration { PerPrincipalMaxConcurrentRun = 1 };
+        var principal = new StubPrincipal();
+        var limiter = new ConcurrencyLimiter(config, new StubDiscovery(), principal);
+        var train = typeof(IFakeTrain).FullName!;
+
+        for (var i = 0; i < 100; i++)
+        {
+            principal.CurrentId = $"principal-{i}";
+            using var permit = await limiter.AcquireAsync(train, CancellationToken.None);
+            limiter.PerPrincipalEntryCount.Should().Be(1);
+        }
+
+        limiter
+            .PerPrincipalEntryCount.Should()
+            .Be(
+                0,
+                "a principal with nothing running needs no semaphore, and keeping one per id ever "
+                    + "seen grows with every distinct principal for the life of the process"
+            );
+    }
+
+    [Test]
+    public async Task APrincipalsSemaphore_OutlivesACancelledWaiter_UntilTheLastRunReleases()
+    {
+        var config = new MediatorConfiguration { PerPrincipalMaxConcurrentRun = 1 };
+        var principal = new StubPrincipal { CurrentId = "alice" };
+        var limiter = new ConcurrencyLimiter(config, new StubDiscovery(), principal);
+        var train = typeof(IFakeTrain).FullName!;
+
+        var held = await limiter.AcquireAsync(train, CancellationToken.None);
+
+        using var cts = new CancellationTokenSource();
+        var waiting = limiter.AcquireAsync(train, cts.Token);
+        await cts.CancelAsync();
+        await FluentActions
+            .Awaiting(() => waiting)
+            .Should()
+            .ThrowAsync<OperationCanceledException>();
+
+        limiter
+            .PerPrincipalEntryCount.Should()
+            .Be(1, "the run still holding alice's slot keeps her semaphore");
+
+        held.Dispose();
+        limiter.PerPrincipalEntryCount.Should().Be(0);
+
+        // A fresh semaphore starts with the full limit.
+        using var next = await limiter
+            .AcquireAsync(train, CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
     public async Task SamePrincipal_OverCap_BlocksUntilRelease()
     {
         var config = new MediatorConfiguration { PerPrincipalMaxConcurrentRun = 2 };

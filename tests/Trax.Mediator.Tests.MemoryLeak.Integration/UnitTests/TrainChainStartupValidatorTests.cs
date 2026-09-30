@@ -19,8 +19,10 @@ namespace Trax.Mediator.Tests.MemoryLeak.Integration.UnitTests;
 /// <para>A chain names junction types, so two things are decidable at startup: that it can be
 /// read as a declaration, and that every junction's input reaches Memory, or can be supplied by the
 /// container, before it is needed. Each of those otherwise waits for something to run the train,
-/// which for a rarely-taken train can be a long way from deployment. Whether a junction can be
-/// constructed is deliberately not checked.</para>
+/// which for a rarely-taken train can be a long way from deployment. A junction Trax cannot build
+/// (not exactly one public constructor) is refused as well; whether its constructor arguments will
+/// be found is not checked. A train whose own constructor needs an unregistered type is refused,
+/// and one that needs a registered type only a request can build is skipped with a warning.</para>
 ///
 /// <para>Enforces Trax.Docs/adr/0016-a-junction-chain-is-a-declaration-not-a-step-of-the-work.md.</para>
 /// </summary>
@@ -84,7 +86,7 @@ public class TrainChainStartupValidatorTests
 
         try
         {
-            await validator.StartAsync(token);
+            await validator.StartingAsync(token);
             return null;
         }
         catch (Exception ex)
@@ -370,6 +372,95 @@ public class TrainChainStartupValidatorTests
             );
     }
 
+    [Test]
+    public async Task Startup_WhenATrainNeedsAServiceThatIsNotRegistered_RefusesToStartNamingIt()
+    {
+        var logger = new RecordingLogger();
+
+        var failure = await Start<INeedsUnregisteredTrain, NeedsUnregisteredTrain>(logger: logger);
+
+        failure
+            .Should()
+            .BeOfType<TrainException>(
+                "a missing registration fails every run of the train, which is not the same as a "
+                    + "dependency only a request can supply"
+            );
+        failure!
+            .Message.Should()
+            .Contain(
+                $"{nameof(INeedsUnregisteredTrain)} cannot be built: its constructor needs "
+                    + $"'{nameof(IUnregisteredProbeService)}', which is not registered. "
+                    + "Register it before building the host."
+            );
+        logger.Warnings.Should().BeEmpty("a refused train is not also reported as skipped");
+    }
+
+    [Test]
+    public async Task Startup_NamesTheFaultyStepFromOneAndItsJunction()
+    {
+        var failure = await Start<IBrokenFlowTrain, BrokenFlowTrain>();
+
+        failure!
+            .Message.Should()
+            .Contain(
+                $"{nameof(IBrokenFlowTrain)}: step 1 ({nameof(NumberToFlag)}) needs",
+                "a 0-based index and no junction name leaves the reader counting steps by hand"
+            );
+    }
+
+    [Test]
+    public async Task Startup_WhenAChainNamesSomethingThatIsNotAJunction_ReportsThatFirstWithoutTheResolveCascade()
+    {
+        var failure = await Start<INotAJunctionTrain, NotAJunctionTrain>();
+
+        failure.Should().BeOfType<TrainException>();
+
+        var lines = failure!
+            .Message.Split(Environment.NewLine)
+            .Where(line => line.Contains(nameof(INotAJunctionTrain)))
+            .ToList();
+
+        lines
+            .Should()
+            .ContainSingle(
+                "the Resolve fault is a consequence of the refused step, and fixing that step is "
+                    + "what the reader has to do"
+            )
+            .Which.Should()
+            .Contain(nameof(NotAJunction))
+            .And.Contain("does not implement IJunction<TIn, TOut>")
+            .And.NotContain("the chain ends without");
+    }
+
+    [Test]
+    public async Task Startup_WhenATrainHasSeveralFaults_PutsEachOnItsOwnLineRefusalsFirst()
+    {
+        var failure = await Start<ISeveralFaultsTrain, SeveralFaultsTrain>();
+
+        var lines = failure!
+            .Message.Split(Environment.NewLine)
+            .Where(line => line.Contains(nameof(ISeveralFaultsTrain)))
+            .ToList();
+
+        lines.Should().HaveCount(2);
+        lines[0].Should().Contain(nameof(NotAJunction), "a refusal comes before step faults");
+        lines[1].Should().Contain($"step 1 ({nameof(NumberToFlag)}) needs");
+    }
+
+    [Test]
+    public async Task Startup_WhenAJunctionHasTwoConstructors_RefusesToStartNamingIt()
+    {
+        var failure = await Start<ITwoConstructorJunctionTrain, TwoConstructorJunctionTrain>();
+
+        failure
+            .Should()
+            .BeOfType<TrainException>("Trax builds a junction through its single constructor");
+        failure!
+            .Message.Should()
+            .Contain(nameof(ITwoConstructorJunctionTrain))
+            .And.Contain(nameof(TwoConstructorJunction));
+    }
+
     /// <summary>Keeps the warnings the validator logs, so a skip can be told from a pass.</summary>
     public sealed class RecordingLogger : ILogger<TrainChainStartupValidator>
     {
@@ -571,5 +662,59 @@ public class TrainChainStartupValidatorTests
         // The chain itself is fine. Only the scope the check builds it in is at issue.
         protected override Task<Either<Exception, bool>> Junctions() =>
             Chain<TextToNumber>().Chain<NumberToFlag>().Resolve();
+    }
+
+    public interface IUnregisteredProbeService;
+
+    public interface INeedsUnregisteredTrain : IServiceTrain<ChainProbeInput, bool>;
+
+    public class NeedsUnregisteredTrain(IUnregisteredProbeService probe)
+        : ServiceTrain<ChainProbeInput, bool>,
+            INeedsUnregisteredTrain
+    {
+        public IUnregisteredProbeService Probe { get; } = probe;
+
+        protected override Task<Either<Exception, bool>> Junctions() =>
+            Chain<TextToNumber>().Chain<NumberToFlag>().Resolve();
+    }
+
+    /// <summary>A class a chain names although it does not implement <c>IJunction</c>.</summary>
+    public class NotAJunction;
+
+    public interface INotAJunctionTrain : IServiceTrain<ChainProbeInput, bool>;
+
+    public class NotAJunctionTrain : ServiceTrain<ChainProbeInput, bool>, INotAJunctionTrain
+    {
+        protected override Task<Either<Exception, bool>> Junctions() =>
+            Chain<NotAJunction>().Resolve();
+    }
+
+    public interface ISeveralFaultsTrain : IServiceTrain<ChainProbeInput, bool>;
+
+    public class SeveralFaultsTrain : ServiceTrain<ChainProbeInput, bool>, ISeveralFaultsTrain
+    {
+        // NotAJunction is refused and records no step, so NumberToFlag is step 1, and it needs an
+        // int that nothing produces.
+        protected override Task<Either<Exception, bool>> Junctions() =>
+            Chain<NotAJunction>().Chain<NumberToFlag>().Resolve();
+    }
+
+    public class TwoConstructorJunction : Junction<ChainProbeInput, bool>
+    {
+        public TwoConstructorJunction() { }
+
+        public TwoConstructorJunction(int ignored) { }
+
+        public override Task<bool> Run(ChainProbeInput input) => Task.FromResult(true);
+    }
+
+    public interface ITwoConstructorJunctionTrain : IServiceTrain<ChainProbeInput, bool>;
+
+    public class TwoConstructorJunctionTrain
+        : ServiceTrain<ChainProbeInput, bool>,
+            ITwoConstructorJunctionTrain
+    {
+        protected override Task<Either<Exception, bool>> Junctions() =>
+            Chain<TwoConstructorJunction>().Resolve();
     }
 }
