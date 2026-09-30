@@ -29,15 +29,20 @@ namespace Trax.Mediator.Services.ChainVerification;
 /// <c>ChainVerification</c> (a junction asking for an interface that only a subtype of the
 /// train's declared input implements), or temporarily while a codebase whose chains do not pass
 /// yet is moved onto <c>Junctions()</c>.</para>
+///
+/// <para>The check runs in <see cref="StartingAsync"/>, which the host finishes for every hosted
+/// service before it calls any <c>StartAsync</c>. A refusal therefore stops the host before a
+/// worker starts claiming work, even under <c>HostOptions.ServicesStartConcurrently</c>, where
+/// every <c>StartAsync</c> begins at once and registration order decides nothing.</para>
 /// </remarks>
 internal sealed class TrainChainStartupValidator(
     ITrainDiscoveryService discoveryService,
     IServiceScopeFactory scopeFactory,
     MediatorConfiguration configuration,
     ILogger<TrainChainStartupValidator>? logger = null
-) : IHostedService
+) : IHostedLifecycleService
 {
-    public async Task StartAsync(CancellationToken cancellationToken)
+    public async Task StartingAsync(CancellationToken cancellationToken)
     {
         if (configuration.SkipChainVerification)
         {
@@ -91,7 +96,15 @@ internal sealed class TrainChainStartupValidator(
         logger?.LogDebug("Verified the chains of {TrainCount} trains.", checkedTrains);
     }
 
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StartedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StoppingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     /// <summary>
     /// Returns what is wrong with a train's chain, or null. <paramref name="skipped"/> says why

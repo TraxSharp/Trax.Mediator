@@ -84,7 +84,7 @@ public class TrainChainStartupValidatorTests
 
         try
         {
-            await validator.StartAsync(token);
+            await validator.StartingAsync(token);
             return null;
         }
         catch (Exception ex)

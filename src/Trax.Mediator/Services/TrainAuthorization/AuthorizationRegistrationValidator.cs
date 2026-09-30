@@ -22,13 +22,18 @@ namespace Trax.Mediator.Services.TrainAuthorization;
 /// </item>
 /// </list>
 /// </summary>
+/// <remarks>
+/// Checks in <see cref="StartingAsync"/>, which the host finishes for every hosted service before
+/// it calls any <c>StartAsync</c>, so a refusal stops the host before a worker starts, even under
+/// <c>HostOptions.ServicesStartConcurrently</c>.
+/// </remarks>
 internal sealed class AuthorizationRegistrationValidator(
     ITrainDiscoveryService discoveryService,
     MediatorConfiguration configuration,
     IServiceProvider serviceProvider
-) : IHostedService
+) : IHostedLifecycleService
 {
-    public Task StartAsync(CancellationToken cancellationToken)
+    public Task StartingAsync(CancellationToken cancellationToken)
     {
         var registrations = discoveryService.DiscoverTrains();
 
@@ -106,5 +111,13 @@ internal sealed class AuthorizationRegistrationValidator(
         }
     }
 
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StartedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StoppingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }
