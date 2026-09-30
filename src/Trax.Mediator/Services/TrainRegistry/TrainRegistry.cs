@@ -56,7 +56,8 @@ internal class TrainRegistry : ITrainRegistry
     /// The constructor performs the following steps:
     /// 1. Identifies the IServiceTrain&lt;TIn, TOut&gt; generic type definition
     /// 2. Scans each assembly for classes that implement this interface
-    /// 3. Extracts the train types, preferring interfaces over concrete types
+    /// 3. Selects each train's service type: its own interface deriving from
+    ///    IServiceTrain&lt;TIn, TOut&gt;, else the closed IServiceTrain&lt;TIn, TOut&gt;
     /// 4. Extracts the input types from the train interfaces
     /// 5. Builds a dictionary that maps input types to train types
     ///
@@ -92,22 +93,10 @@ internal class TrainRegistry : ITrainRegistry
                 if (!seen.Add(concreteType))
                     continue;
 
-                // Prefer a non-generic interface (e.g., IMyTrain). If none exists, fall back
-                // to the closed IServiceTrain<TIn, TOut> generic — this matches the original
-                // RegisterServiceTrains behavior and avoids DI disposal issues when the
-                // service type is the concrete class itself.
-                var serviceType =
-                    concreteType
-                        .GetInterfaces()
-                        .FirstOrDefault(y => !y.IsGenericType && y != typeof(IDisposable))
-                    ?? concreteType
-                        .GetInterfaces()
-                        .FirstOrDefault(y =>
-                            y.IsGenericType && y.GetGenericTypeDefinition() == trainType
-                        )
-                    ?? throw new TrainException(
-                        $"Could not find an interface attached to ({concreteType.Name}) with Full Name ({concreteType.FullName}) on Assembly ({concreteType.AssemblyQualifiedName}). At least one Interface is required."
-                    );
+                // The train's own interface (IMyTrain), or the closed IServiceTrain<TIn, TOut>
+                // when it has none. Never the concrete class itself, which would give DI
+                // disposal issues.
+                var serviceType = TrainServiceType.Select(concreteType);
 
                 discovered.Add((serviceType, concreteType));
             }
@@ -121,19 +110,10 @@ internal class TrainRegistry : ITrainRegistry
         InputTypeToTrain = new Dictionary<Type, Type>();
         foreach (var (serviceType, implementationType) in discovered)
         {
-            // Use the concrete type to find IServiceTrain<TIn, TOut> — the service type
-            // may be a non-generic interface (IMyTrain) whose GetInterfaces() includes
-            // IServiceTrain<,>, or it may itself be IServiceTrain<,> when no dedicated
-            // interface exists. The concrete type always has it.
+            // The input type of the service type the train is registered under, which is the
+            // one the bus resolves.
             var inputType =
-                implementationType
-                    .GetInterfaces()
-                    .Where(interfaceType => interfaceType.IsGenericType)
-                    .FirstOrDefault(interfaceType =>
-                        interfaceType.GetGenericTypeDefinition() == trainType
-                    )
-                    ?.GetGenericArguments()
-                    .FirstOrDefault()
+                TrainServiceType.FindClosedServiceTrain(serviceType)?.GetGenericArguments()[0]
                 ?? throw new TrainException(
                     $"Could not find an interface and/or an inherited interface of type ({trainType.Name}) on target type ({implementationType.Name}) with FullName ({implementationType.FullName}) on Assembly ({implementationType.AssemblyQualifiedName})."
                 );

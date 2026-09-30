@@ -31,6 +31,14 @@ public static class ServiceExtensions
     /// <summary>
     /// Registers all effect trains found in the specified assemblies with the dependency injection container.
     /// </summary>
+    /// <remarks>
+    /// Each train is registered under its own interface, the one deriving from
+    /// <c>IServiceTrain&lt;TIn, TOut&gt;</c>, or under the closed <c>IServiceTrain&lt;TIn, TOut&gt;</c>
+    /// when it has none. Other interfaces it or a base class implements are not considered.
+    /// </remarks>
+    /// <exception cref="TrainException">
+    /// A train implements two train interfaces neither of which extends the other.
+    /// </exception>
     /// <exception cref="ArgumentException">
     /// <paramref name="serviceLifetime"/> is Singleton: a train instance is one run.
     /// </exception>
@@ -61,17 +69,7 @@ public static class ServiceExtensions
                         .Select(y => y.GetGenericTypeDefinition())
                         .Contains(trainType)
                 )
-                .Select(type =>
-                    (
-                        type.GetInterfaces()
-                            .FirstOrDefault(y => !y.IsGenericType && y != typeof(IDisposable))
-                            ?? type.GetInterfaces().FirstOrDefault()
-                            ?? throw new TrainException(
-                                $"Could not find an interface attached to ({type.Name}) with Full Name ({type.FullName}) on Assembly ({type.AssemblyQualifiedName}). At least one Interface is required."
-                            ),
-                        type
-                    )
-                );
+                .Select(type => (TrainServiceType.Select(type), type));
 
             types.AddRange(trainTypes);
         }
