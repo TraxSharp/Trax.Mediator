@@ -106,7 +106,8 @@ internal class TrainRegistry : ITrainRegistry
 
         // Build the input type → train mapping, skipping duplicates.
         // Multiple trains can share the same input type (e.g., internal scheduler
-        // trains using Unit). These are resolved directly from DI rather than the bus.
+        // trains using Unit). The bus's input-keyed RunAsync reaches only the first of
+        // them; everything that names a train runs it by name instead (ITrainBus.RunByNameAsync).
         InputTypeToTrain = new Dictionary<Type, Type>();
         foreach (var (serviceType, implementationType) in discovered)
         {
