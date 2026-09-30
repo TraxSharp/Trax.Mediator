@@ -45,6 +45,12 @@ internal class TrainRegistry : ITrainRegistry
     internal IReadOnlyList<(Type ServiceType, Type ImplementationType)> DiscoveredTrains { get; }
 
     /// <summary>
+    /// The assemblies this registry scanned, each once, in the order given. Named in the error a
+    /// host gets when no train takes an input, so it can see where Trax looked.
+    /// </summary>
+    internal IReadOnlyList<Assembly> ScannedAssemblies { get; }
+
+    /// <summary>
     /// Initializes a new instance of the TrainRegistry class by scanning the provided assemblies for train implementations.
     /// </summary>
     /// <param name="assemblies">The assemblies to scan for train implementations</param>
@@ -66,6 +72,8 @@ internal class TrainRegistry : ITrainRegistry
     /// </remarks>
     public TrainRegistry(params Assembly[] assemblies)
     {
+        ScannedAssemblies = [.. assemblies.Distinct()];
+
         // The type we will be looking for in our assemblies
         var trainType = typeof(IServiceTrain<,>);
 

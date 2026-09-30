@@ -1,12 +1,10 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Trax.Core.Extensions;
-using Trax.Effect.Configuration.TraxEffectConfiguration;
 using Trax.Effect.Data.Services.DataContext;
 using Trax.Effect.Data.Services.DataContextTransaction;
 using Trax.Effect.Data.Services.EnqueueContext;
@@ -18,7 +16,6 @@ using Trax.Effect.Models.Metadata.DTOs;
 using Trax.Effect.Models.WorkQueue;
 using Trax.Effect.Models.WorkQueue.DTOs;
 using Trax.Effect.Services.ServiceTrain;
-using Trax.Effect.Utils;
 using Trax.Mediator.Configuration;
 using Trax.Mediator.Exceptions;
 using Trax.Mediator.Services.ConcurrencyLimiter;
@@ -87,10 +84,12 @@ public class TrainExecutionService(
 
         registration.ServiceType.FullName.AssertLoaded();
 
-        var serializedInput = JsonSerializer.Serialize(
+        // Measured before the entry exists: the stored form is written indented and with every
+        // member present, so it is capped too, not only the caller's text.
+        var serializedInput = TrainInputReader.WriteForStorage(
             input,
-            registration.InputType,
-            TraxJsonSerializationOptions.ManifestProperties
+            registration,
+            mediatorConfiguration.MaxInputJsonBytes
         );
 
         // The train is resolved at most once per enqueue, in a scope of its own that is disposed
@@ -335,13 +334,15 @@ public class TrainExecutionService(
 
         // A run needs an input instance, and the runner refuses an entry that has none, so
         // storing null only deferred the failure to dispatch, where nobody who could fix it would
-        // see it. No input is read as an empty object instead, which is refused here when the
-        // input type needs values (see DeserializeInput).
-        var missing = string.IsNullOrWhiteSpace(inputJson);
-        var json = missing ? EmptyInput : inputJson!;
+        // see it. No input is read as an empty object instead, which is refused when the input
+        // type needs values (see TrainInputReader.Read).
+        var input = TrainInputReader.Read(
+            inputJson,
+            registration,
+            mediatorConfiguration.MaxInputJsonBytes
+        );
 
-        EnforceInputSizeCap(json, registration);
-        return (registration, DeserializeInput(json, registration, missing));
+        return (registration, input);
     }
 
     /// <summary>
@@ -880,114 +881,6 @@ public class TrainExecutionService(
 
         throw new TrainNotFoundException(trainName);
     }
-
-    private void EnforceInputSizeCap(string inputJson, TrainRegistration registration)
-    {
-        // Enforced post-authorization so unauthenticated callers can't map the cap,
-        // and pre-deserialization so oversized JSON never reaches the deserializer.
-        // Byte length (UTF-8) is the bounded resource — char length would miscount
-        // surrogate pairs and multi-byte sequences.
-        var byteCount = System.Text.Encoding.UTF8.GetByteCount(inputJson);
-        if (byteCount > mediatorConfiguration.MaxInputJsonBytes)
-            throw new TrainInputValidationException(
-                registration.ServiceTypeName,
-                byteCount,
-                mediatorConfiguration.MaxInputJsonBytes
-            );
-    }
-
-    /// <summary>What a missing input is read as.</summary>
-    private const string EmptyInput = "{}";
-
-    private static object DeserializeInput(
-        string inputJson,
-        TrainRegistration registration,
-        bool missing
-    )
-    {
-        object? input;
-
-        if (missing)
-        {
-            // A missing input stands in for an input with no values, which is only honest for a
-            // type that needs none. System.Text.Json builds a positional record from {} with every
-            // constructor parameter at its default, so without this a train taking
-            // record RenamePlayer(string Id, string NewName) would be queued with a null Id.
-            // Respecting required constructor parameters refuses exactly that, and leaves Unit,
-            // an input with only settable properties, and parameters with defaults unaffected.
-            try
-            {
-                input = JsonSerializer.Deserialize(
-                    inputJson,
-                    registration.InputType,
-                    InputOptions().Missing
-                );
-            }
-            catch (JsonException refused)
-            {
-                throw new JsonException(
-                    $"No input was given, and {registration.InputTypeName} cannot be built "
-                        + $"without one: {refused.Message}",
-                    refused
-                );
-            }
-        }
-        else
-        {
-            input = JsonSerializer.Deserialize(
-                inputJson,
-                registration.InputType,
-                InputOptions().Given
-            );
-        }
-
-        // A JSON null is well-formed but is not an input, so it is reported the way any other
-        // input the train cannot use is: as a JSON problem the caller can fix.
-        if (input is null)
-            throw new JsonException(
-                $"InputJson deserialized to null. Expected an instance of {registration.InputTypeName}."
-            );
-
-        return input;
-    }
-
-    private static CallerInputOptions? _inputOptions;
-
-    /// <summary>
-    /// How a caller's input is read: the system options, with property names matched whatever
-    /// their case and a property given twice (in any casing) refused, so the API and the
-    /// dashboard accept the same JSON and ambiguous input is never resolved silently to its last
-    /// value (Trax.Docs/adr/0023). The missing-input reading also respects required constructor
-    /// parameters. Rebuilt only if the system options object itself is replaced.
-    /// </summary>
-    private static CallerInputOptions InputOptions()
-    {
-        var source = TraxEffectConfiguration.StaticSystemJsonSerializerOptions;
-        var cached = _inputOptions;
-
-        if (cached is not null && ReferenceEquals(cached.Source, source))
-            return cached;
-
-        var given = new JsonSerializerOptions(source)
-        {
-            PropertyNameCaseInsensitive = true,
-            AllowDuplicateProperties = false,
-        };
-        var missing = new JsonSerializerOptions(given)
-        {
-            RespectRequiredConstructorParameters = true,
-        };
-
-        var built = new CallerInputOptions(source, given, missing);
-        _inputOptions = built;
-        return built;
-    }
-
-    private sealed record CallerInputOptions(
-        JsonSerializerOptions Source,
-        JsonSerializerOptions Given,
-        JsonSerializerOptions Missing
-    );
 
     /// <summary>
     /// The train one enqueue reads its subject key, its deferral flag and its hook from: resolved

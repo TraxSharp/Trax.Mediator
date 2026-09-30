@@ -33,25 +33,27 @@ internal sealed class AuthorizationRegistrationValidator(
     IServiceProvider serviceProvider
 ) : IHostedLifecycleService
 {
-    public Task StartingAsync(CancellationToken cancellationToken)
+    public async Task StartingAsync(CancellationToken cancellationToken)
     {
         var registrations = discoveryService.DiscoverTrains();
 
         ValidateAttributeShapes(registrations);
-        ValidateAuthServicePresence(registrations);
-
-        return Task.CompletedTask;
+        await ValidateAuthServicePresenceAsync(registrations);
     }
 
-    private void ValidateAuthServicePresence(IReadOnlyList<TrainRegistration> registrations)
+    private async Task ValidateAuthServicePresenceAsync(
+        IReadOnlyList<TrainRegistration> registrations
+    )
     {
         if (configuration.AllowMissingAuthorizationService)
             return;
 
         // ITrainAuthorizationService is registered Scoped, so we must resolve it
         // inside a scope. Startup runs against the root provider, which trips
-        // ServiceProvider's scope validation in dev / test hosts.
-        using (var scope = serviceProvider.CreateScope())
+        // ServiceProvider's scope validation in dev / test hosts. Disposed asynchronously, because
+        // an implementation may be disposable only asynchronously, and disposing that scope
+        // synchronously throws.
+        await using (var scope = serviceProvider.CreateAsyncScope())
         {
             var authService = scope.ServiceProvider.GetService<ITrainAuthorizationService>();
             if (authService is not null)
