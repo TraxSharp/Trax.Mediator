@@ -44,6 +44,28 @@ public class LeaderboardController(ITrainBus trains) : ControllerBase
 The controller never names the train: the bus runs the one registered for `RecalculateLeaderboardInput` and records the
 run. A chain that can never be satisfied stops the host at startup.
 
+## Where this fits
+
+Trax is split into layers, one repo each. Take the ones you need; the trains you wrote do not change. **You are here: Trax.Mediator.**
+
+| Repo | What it adds |
+|---|---|
+| [Trax.Core](https://github.com/TraxSharp/Trax.Core) | Trains, junctions and the chain, with no database and no DI container |
+| [Trax.Effect](https://github.com/TraxSharp/Trax.Effect) | A recorded run for every execution (Postgres, SQLite or in memory), DI, effect providers, the state-machine engine |
+| **[Trax.Mediator](https://github.com/TraxSharp/Trax.Mediator)** | **The train bus: run a train by handing over its input, with every chain checked at startup** |
+| [Trax.Scheduler](https://github.com/TraxSharp/Trax.Scheduler) | Cron and interval schedules, retries, dead letters, and workers on other machines or in Lambda |
+| [Trax.Api](https://github.com/TraxSharp/Trax.Api) | GraphQL generated from your trains, with authentication, audit and typed clients |
+| [Trax.Dashboard](https://github.com/TraxSharp/Trax.Dashboard) | A Blazor Server UI for runs, schedules and dead letters, mounted in your app |
+| [Trax.Cli](https://github.com/TraxSharp/Trax.Cli) | The `trax` tool: scaffold a hub and trains from an OpenAPI or GraphQL schema, and state-machine codegen |
+| [Trax.Samples](https://github.com/TraxSharp/Trax.Samples) | Complete sample apps, and the `trax-api`, `trax-scheduler` and `trax-hub` templates |
+
+Docs live in [Trax.Docs](https://github.com/TraxSharp/Trax.Docs) and are published at [traxsharp.net/docs](https://traxsharp.net/docs).
+
+## Contributing
+
+Read [AGENTS.md](https://github.com/TraxSharp/Trax.Mediator/blob/main/AGENTS.md) before changing code. Report vulnerabilities
+privately as described in [SECURITY.md](https://github.com/TraxSharp/Trax.Mediator/blob/main/SECURITY.md).
+
 ## License
 
 MIT. There is no commercial edition, and there will not be one.
