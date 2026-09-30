@@ -15,6 +15,7 @@
     <PackageVersion Include="Trax.Effect.JunctionProvider.Logging" Version="1.57.3" />
     <PackageVersion Include="Trax.Effect.Provider.Json" Version="1.57.3" />
     <PackageVersion Include="Trax.Effect.Provider.Parameter" Version="1.57.3" />
+    <PackageVersion Include="Trax.Effect.StateMachine.Persistence" Version="1.57.3" />
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <PackageVersion Include="DotNet.ReproducibleBuilds" Version="2.0.5" />
     <PackageVersion Include="FluentAssertions" Version="8.11.0" />
@@ -48,5 +49,6 @@
     <PackageVersion Update="Trax.Effect.JunctionProvider.Logging" Version="$(TraxLocalVersion)" />
     <PackageVersion Update="Trax.Effect.Provider.Json" Version="$(TraxLocalVersion)" />
     <PackageVersion Update="Trax.Effect.Provider.Parameter" Version="$(TraxLocalVersion)" />
+    <PackageVersion Update="Trax.Effect.StateMachine.Persistence" Version="$(TraxLocalVersion)" />
   </ItemGroup>
 </Project>
