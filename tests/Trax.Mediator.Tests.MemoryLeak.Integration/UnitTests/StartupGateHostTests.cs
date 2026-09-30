@@ -126,6 +126,59 @@ public class StartupGateHostTests
     }
 
     [Test]
+    public async Task AHostWithAJunctionThatHasTwoConstructors_RefusesToStartNamingIt()
+    {
+        var worker = new MarkerWorker();
+        using var host = BuildHost(
+            concurrent: false,
+            worker,
+            services =>
+                services.AddScopedTraxRoute<
+                    TrainChainStartupValidatorTests.ITwoConstructorJunctionTrain,
+                    TrainChainStartupValidatorTests.TwoConstructorJunctionTrain
+                >()
+        );
+
+        var start = async () => await host.StartAsync();
+
+        (await start.Should().ThrowAsync<Exception>())
+            .Which.ToString()
+            .Should()
+            .Contain(nameof(TrainChainStartupValidatorTests.ITwoConstructorJunctionTrain))
+            .And.Contain(
+                nameof(TrainChainStartupValidatorTests.TwoConstructorJunction),
+                "Trax builds a junction through its single constructor, so one it cannot build "
+                    + "fails every run of the train"
+            );
+        worker.Started.Should().BeFalse();
+    }
+
+    [Test]
+    public async Task AHostWithATrainNeedingAnUnregisteredService_RefusesToStartNamingIt()
+    {
+        var worker = new MarkerWorker();
+        using var host = BuildHost(
+            concurrent: false,
+            worker,
+            services =>
+                services.AddScopedTraxRoute<
+                    TrainChainStartupValidatorTests.INeedsUnregisteredTrain,
+                    TrainChainStartupValidatorTests.NeedsUnregisteredTrain
+                >()
+        );
+
+        var start = async () => await host.StartAsync();
+
+        (await start.Should().ThrowAsync<Exception>())
+            .Which.ToString()
+            .Should()
+            .Contain(nameof(TrainChainStartupValidatorTests.INeedsUnregisteredTrain))
+            .And.Contain(nameof(TrainChainStartupValidatorTests.IUnregisteredProbeService))
+            .And.Contain("Register it");
+        worker.Started.Should().BeFalse();
+    }
+
+    [Test]
     public async Task AHostWhoseTrainsAllPass_Starts()
     {
         var worker = new MarkerWorker();
