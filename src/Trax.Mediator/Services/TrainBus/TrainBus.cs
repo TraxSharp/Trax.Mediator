@@ -11,6 +11,7 @@ using Trax.Effect.Extensions;
 using Trax.Effect.Models.Metadata;
 using Trax.Effect.Services.ServiceTrain;
 using Trax.Mediator.Services.TrainRegistry;
+using ScanningTrainRegistry = Trax.Mediator.Services.TrainRegistry.TrainRegistry;
 
 namespace Trax.Mediator.Services.TrainBus;
 
@@ -167,12 +168,31 @@ internal class TrainBus(
         var foundTrain = registry.InputTypeToTrain.TryGetValue(inputType, out var correctTrain);
 
         if (foundTrain == false || correctTrain == null)
-            throw new TrainException($"Could not find train with input type ({inputType.Name})");
+            throw new TrainException(NoTrainForInputMessage(inputType, registry));
 
         var trainService = provider.GetRequiredService(correctTrain);
         provider.InjectProperties(trainService);
 
         return trainService;
+    }
+
+    /// <summary>
+    /// What the host is told when no registered train takes an input: the input type, where the
+    /// registry looked, and the two ways to fix it. This is a configuration error in the host,
+    /// unlike <c>TrainNotFoundException</c>, whose message is generic on purpose.
+    /// </summary>
+    private static string NoTrainForInputMessage(Type inputType, ITrainRegistry registry)
+    {
+        var scanned = registry is ScanningTrainRegistry scanning
+            ? "Scanned assemblies: ["
+                + string.Join(", ", scanning.ScannedAssemblies.Select(a => a.GetName().Name))
+                + "]. "
+            : "";
+
+        return $"Could not find train with input type ({inputType.FullName}): no "
+            + $"IServiceTrain<{inputType.Name}, TOut> is registered for it. {scanned}Add a train "
+            + "that takes this input type, or add the assembly that holds its train to "
+            + "ScanAssemblies(...).";
     }
 
     /// <summary>
