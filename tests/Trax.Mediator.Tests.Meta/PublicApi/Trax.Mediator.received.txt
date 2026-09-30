@@ -72,6 +72,23 @@ namespace Trax.Mediator.Exceptions
 }
 namespace Trax.Mediator.Extensions
 {
+    public static class BuilderOrderExtensions
+    {
+        [System.Obsolete("Call AddEffects(...) before AddMediator(...).", true)]
+        public static Trax.Mediator.Configuration.TraxBuilderWithMediator AddMediator(this Trax.Effect.Configuration.TraxBuilder.TraxBuilder builder, System.Func<Trax.Mediator.Configuration.TraxMediatorBuilder, Trax.Mediator.Configuration.TraxMediatorBuilder> configure) { }
+        [System.Obsolete("Call AddEffects(...) before AddMediator(...).", true)]
+        public static Trax.Mediator.Configuration.TraxBuilderWithMediator AddMediator(this Trax.Effect.Configuration.TraxBuilder.TraxBuilder builder, params System.Reflection.Assembly[] assemblies) { }
+        [System.Obsolete("AddMediator(...) is already called. Call it once and configure everything in that" +
+            " call.", true)]
+        public static Trax.Mediator.Configuration.TraxBuilderWithMediator AddMediator(this Trax.Mediator.Configuration.TraxBuilderWithMediator builder, System.Func<Trax.Mediator.Configuration.TraxMediatorBuilder, Trax.Mediator.Configuration.TraxMediatorBuilder> configure) { }
+        [System.Obsolete("AddMediator(...) is already called. Call it once and configure everything in that" +
+            " call.", true)]
+        public static Trax.Mediator.Configuration.TraxBuilderWithMediator AddMediator(this Trax.Mediator.Configuration.TraxBuilderWithMediator builder, params System.Reflection.Assembly[] assemblies) { }
+        [System.Obsolete("Call AddStateMachines(...) before AddMediator(...).", true)]
+        public static Trax.Mediator.Configuration.TraxBuilderWithMediator AddStateMachines(this Trax.Mediator.Configuration.TraxBuilderWithMediator builder, params System.Reflection.Assembly[] assemblies) { }
+        [System.Obsolete("Call AddStateMachines(...) before AddMediator(...).", true)]
+        public static Trax.Mediator.Configuration.TraxBuilderWithMediator AddStateMachines(this Trax.Mediator.Configuration.TraxBuilderWithMediator builder, System.Action<dynamic> configure, params System.Reflection.Assembly[] assemblies) { }
+    }
     public static class ServiceExtensions
     {
         public static Trax.Mediator.Configuration.TraxBuilderWithMediator AddMediator(this Trax.Effect.Configuration.TraxBuilder.TraxBuilderWithEffects builder, System.Func<Trax.Mediator.Configuration.TraxMediatorBuilder, Trax.Mediator.Configuration.TraxMediatorBuilder> configure) { }
