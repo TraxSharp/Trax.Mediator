@@ -282,6 +282,46 @@ internal class TrainBus(
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var trainService = InitializeTrainFromProvider(scope.ServiceProvider, trainInput);
+
+        return await RunResolvedAsync<TOut>(trainService, trainInput, metadata, cancellationToken);
+    }
+
+    /// <summary>
+    /// Runs the train registered for the input's runtime type as a <c>Pending</c> record that
+    /// <paramref name="createPendingMetadata"/> writes only once the train has been resolved, so
+    /// a train that cannot be built (no registration, a dependency missing from DI) leaves no
+    /// record behind. Used by <see cref="RunExecutor.LocalRunExecutor"/>.
+    /// </summary>
+    /// <param name="trainInput">The input; its runtime type selects the train.</param>
+    /// <param name="createPendingMetadata">
+    /// Writes and returns the <c>Pending</c> record the train runs as. Called after resolution
+    /// and before the train runs.
+    /// </param>
+    /// <param name="cancellationToken">Passed to <paramref name="createPendingMetadata"/> and the train.</param>
+    internal async Task<TOut> RunAsPendingAsync<TOut>(
+        object trainInput,
+        Func<CancellationToken, Task<Metadata>> createPendingMetadata,
+        CancellationToken cancellationToken
+    )
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var trainService = InitializeTrainFromProvider(scope.ServiceProvider, trainInput);
+        var metadata = await createPendingMetadata(cancellationToken);
+
+        return await RunResolvedAsync<TOut>(trainService, trainInput, metadata, cancellationToken);
+    }
+
+    /// <summary>
+    /// Runs an already-resolved train through <c>Run(input, metadata, ct)</c> when
+    /// <paramref name="metadata"/> is given, or <c>Run(input, ct)</c> when it is not.
+    /// </summary>
+    private static async Task<TOut> RunResolvedAsync<TOut>(
+        object trainService,
+        object trainInput,
+        Metadata? metadata,
+        CancellationToken cancellationToken
+    )
+    {
         var trainType = trainService.GetType();
 
         if (metadata != null)
