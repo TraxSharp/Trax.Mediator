@@ -23,7 +23,9 @@ namespace Trax.Mediator.Services.TrainBus;
 /// the appropriate train for a given input type.
 ///
 /// Each <c>RunAsync</c> call creates a child DI scope, resolves the train from that scope,
-/// executes it, and disposes the scope when done. This ensures each train execution is fully
+/// executes it, and disposes the scope asynchronously when done, so a scoped dependency that is
+/// only <see cref="IAsyncDisposable"/> is released without replacing the run's outcome with a
+/// disposal error. This ensures each train execution is fully
 /// isolated — scoped services like <c>DbContext</c> are not shared across train executions.
 /// This is especially important in Blazor Server where the circuit-level scope persists for
 /// the entire connection.
@@ -200,7 +202,7 @@ internal class TrainBus(
     /// </exception>
     public async Task<TOut> RunAsync<TOut>(object trainInput, Metadata? metadata = null)
     {
-        using var scope = scopeFactory.CreateScope();
+        await using var scope = scopeFactory.CreateAsyncScope();
         var trainService = InitializeTrainFromProvider(scope.ServiceProvider, trainInput);
         var trainType = trainService.GetType();
 
@@ -278,7 +280,7 @@ internal class TrainBus(
         Metadata? metadata = null
     )
     {
-        using var scope = scopeFactory.CreateScope();
+        await using var scope = scopeFactory.CreateAsyncScope();
         var trainService = InitializeTrainFromProvider(scope.ServiceProvider, trainInput);
         var trainType = trainService.GetType();
 
@@ -357,7 +359,7 @@ internal class TrainBus(
     /// </exception>
     public async Task RunAsync(object trainInput, Metadata? metadata = null)
     {
-        using var scope = scopeFactory.CreateScope();
+        await using var scope = scopeFactory.CreateAsyncScope();
         var trainService = InitializeTrainFromProvider(scope.ServiceProvider, trainInput);
         var trainType = trainService.GetType();
 
@@ -436,7 +438,7 @@ internal class TrainBus(
         Metadata? metadata = null
     )
     {
-        using var scope = scopeFactory.CreateScope();
+        await using var scope = scopeFactory.CreateAsyncScope();
         var trainService = InitializeTrainFromProvider(scope.ServiceProvider, trainInput);
         var trainType = trainService.GetType();
 
