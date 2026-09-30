@@ -71,10 +71,9 @@ public class TrainDiscoveryService : ITrainDiscoveryService
             }
 
             // A class registered through a factory cannot be read without running the factory.
-            if (descriptor.ImplementationFactory != null)
+            if (KnownImplementation(descriptor) is not { } implementation)
                 continue;
 
-            var implementation = KnownImplementation(descriptor) ?? serviceType;
             if (seenClasses.Add((serviceType, implementation)))
                 classes.Add(
                     new RegisteredClass(index, serviceType, implementation, descriptor.Lifetime)
@@ -162,10 +161,11 @@ public class TrainDiscoveryService : ITrainDiscoveryService
     /// </summary>
     private static Type? OwnInterface(Type implementation)
     {
+        // Select returns an interface or throws: the train's own interface, or the closed
+        // IServiceTrain<,> when it has none.
         try
         {
-            var selected = TrainServiceType.Select(implementation);
-            return selected.IsInterface ? selected : null;
+            return TrainServiceType.Select(implementation);
         }
         catch (TrainException)
         {

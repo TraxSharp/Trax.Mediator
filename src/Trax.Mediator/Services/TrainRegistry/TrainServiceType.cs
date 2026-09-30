@@ -68,8 +68,12 @@ internal static class TrainServiceType
             ? type
             : type.GetInterfaces().FirstOrDefault(IsClosedServiceTrain);
 
+    /// <summary>
+    /// Whether an interface <paramref name="type"/> implements derives from a closed
+    /// <c>IServiceTrain&lt;,&gt;</c>. Only called on what <see cref="Type.GetInterfaces"/> returns.
+    /// </summary>
     private static bool IsServiceTrainInterface(Type type) =>
-        type.IsInterface && type.GetInterfaces().Any(IsClosedServiceTrain);
+        type.GetInterfaces().Any(IsClosedServiceTrain);
 
     private static bool IsClosedServiceTrain(Type type) =>
         type.IsGenericType && type.GetGenericTypeDefinition() == ServiceTrainDefinition;

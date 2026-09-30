@@ -262,9 +262,9 @@ internal sealed class TrainChainStartupValidator(
             .Where(f => !IsRefusal(f))
             .Where(f => refusals.Count == 0 || f.Kind != ChainStepKind.Resolve)
             .Select(f =>
-                // The one fault Verify reports about the train's input rather than a step.
+                // The one fault Verify reports about the train's input rather than a step. A
+                // recorded Seed step never faults, so every Seed fault is this one.
                 f.Kind == ChainStepKind.Seed
-                && f.Junction is null
                     ? f.Reason
                     : $"step {f.StepIndex + 1} ({StepName(f)}) {f.Reason}"
             );
@@ -293,9 +293,10 @@ internal sealed class TrainChainStartupValidator(
         Type implementation
     )
     {
+        // IsAbstract is true of an interface too, which is what a train registered only through
+        // a factory is listed with.
         if (
             implementation.IsAbstract
-            || implementation.IsInterface
             || services.GetService<IServiceProviderIsService>() is not { } isService
         )
             return [];
