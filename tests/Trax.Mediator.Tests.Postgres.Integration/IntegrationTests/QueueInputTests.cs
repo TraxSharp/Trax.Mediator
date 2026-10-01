@@ -32,6 +32,58 @@ public class QueueInputTests : TestSetup
     }
 
     [Test]
+    public async Task A_run_queued_to_replay_an_earlier_one_carries_the_earlier_runs_id()
+    {
+        // A requeue repeats a run, so it must take the tracks the original took. The entry
+        // carries the original's id to the run's metadata at dispatch, where decision replay
+        // reads it.
+        var result = await Execution.QueueAsync(
+            typeof(IOptionalInputTrain).FullName!,
+            null,
+            new QueueTrainOptions { Priority = 3, ReplayDecisionsOf = 4242 }
+        );
+
+        var entry = await EntryAsync(result.WorkQueueId);
+        entry.ReplayDecisionsOf.Should().Be(4242);
+        entry.Priority.Should().Be(3);
+    }
+
+    [Test]
+    public async Task An_implementation_that_predates_replay_refuses_rather_than_dropping_it()
+    {
+        ITrainExecutionService old = new PredatesReplay();
+
+        var act = async () =>
+            await old.QueueAsync("Any", null, new QueueTrainOptions { ReplayDecisionsOf = 1 });
+
+        await act.Should().ThrowAsync<NotSupportedException>();
+    }
+
+    /// <summary>An implementation written before the options overload existed.</summary>
+    private sealed class PredatesReplay : ITrainExecutionService
+    {
+        public Task<QueueTrainResult> QueueAsync(
+            string trainName,
+            string? inputJson,
+            int priority = 0,
+            DateTime? scheduledAt = null,
+            CancellationToken ct = default
+        ) => Task.FromResult(new QueueTrainResult(1, "x"));
+
+        public Task<RunTrainResult> RunAsync(
+            string trainName,
+            string inputJson,
+            CancellationToken ct = default
+        ) => throw new NotSupportedException();
+
+        public Task<PreparedTrain> PrepareAsync(
+            string trainName,
+            string? inputJson,
+            CancellationToken ct = default
+        ) => throw new NotSupportedException();
+    }
+
+    [Test]
     public async Task No_input_is_stored_as_an_empty_object_the_runner_can_use()
     {
         var result = await Execution.QueueAsync(typeof(IOptionalInputTrain).FullName!, null);

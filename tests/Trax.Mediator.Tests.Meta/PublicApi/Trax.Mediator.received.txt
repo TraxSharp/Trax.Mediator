@@ -199,6 +199,7 @@ namespace Trax.Mediator.Services.TrainExecution
     public interface ITrainExecutionService
     {
         System.Threading.Tasks.Task<Trax.Mediator.Services.TrainExecution.PreparedTrain> PrepareAsync(string trainName, string? inputJson, System.Threading.CancellationToken ct = default);
+        System.Threading.Tasks.Task<Trax.Mediator.Services.TrainExecution.QueueTrainResult> QueueAsync(string trainName, string? inputJson, Trax.Mediator.Services.TrainExecution.QueueTrainOptions options, System.Threading.CancellationToken ct = default);
         System.Threading.Tasks.Task<Trax.Mediator.Services.TrainExecution.QueueTrainResult> QueueAsync(string trainName, string? inputJson, int priority = 0, System.DateTime? scheduledAt = default, System.Threading.CancellationToken ct = default);
         System.Threading.Tasks.Task<Trax.Mediator.Services.TrainExecution.RunTrainResult> RunAsync(string trainName, string inputJson, System.Threading.CancellationToken ct = default);
     }
@@ -206,6 +207,13 @@ namespace Trax.Mediator.Services.TrainExecution
     {
         public object Input { get; }
         public Trax.Mediator.Services.TrainDiscovery.TrainRegistration Registration { get; }
+    }
+    public sealed class QueueTrainOptions : System.IEquatable<Trax.Mediator.Services.TrainExecution.QueueTrainOptions>
+    {
+        public QueueTrainOptions() { }
+        public int Priority { get; init; }
+        public long? ReplayDecisionsOf { get; init; }
+        public System.DateTime? ScheduledAt { get; init; }
     }
     public class QueueTrainResult : System.IEquatable<Trax.Mediator.Services.TrainExecution.QueueTrainResult>
     {
@@ -224,6 +232,7 @@ namespace Trax.Mediator.Services.TrainExecution
     {
         public TrainExecutionService(Trax.Mediator.Services.TrainDiscovery.ITrainDiscoveryService discoveryService, Trax.Mediator.Services.RunExecutor.IRunExecutor runExecutor, Trax.Mediator.Services.ConcurrencyLimiter.IConcurrencyLimiter concurrencyLimiter, Trax.Effect.Data.Services.IDataContextFactory.IDataContextProviderFactory dataContextFactory, Trax.Mediator.Configuration.MediatorConfiguration mediatorConfiguration, System.IServiceProvider serviceProvider) { }
         public System.Threading.Tasks.Task<Trax.Mediator.Services.TrainExecution.PreparedTrain> PrepareAsync(string trainName, string? inputJson, System.Threading.CancellationToken ct = default) { }
+        public System.Threading.Tasks.Task<Trax.Mediator.Services.TrainExecution.QueueTrainResult> QueueAsync(string trainName, string? inputJson, Trax.Mediator.Services.TrainExecution.QueueTrainOptions options, System.Threading.CancellationToken ct = default) { }
         public System.Threading.Tasks.Task<Trax.Mediator.Services.TrainExecution.QueueTrainResult> QueueAsync(string trainName, string? inputJson, int priority = 0, System.DateTime? scheduledAt = default, System.Threading.CancellationToken ct = default) { }
         public System.Threading.Tasks.Task<Trax.Mediator.Services.TrainExecution.RunTrainResult> RunAsync(string trainName, string inputJson, System.Threading.CancellationToken ct = default) { }
     }
