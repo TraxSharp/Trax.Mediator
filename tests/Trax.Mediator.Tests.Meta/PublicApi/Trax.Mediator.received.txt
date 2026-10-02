@@ -40,6 +40,11 @@ namespace Trax.Mediator.Exceptions
         public System.Collections.Generic.IReadOnlyList<string> CandidateFullNames { get; }
         public string RequestedName { get; }
     }
+    public class DecisionReplayNotSupportedException : System.NotSupportedException
+    {
+        public DecisionReplayNotSupportedException(System.Type implementationType) { }
+        public System.Type ImplementationType { get; }
+    }
     public class NoTrainForInputException : System.InvalidOperationException
     {
         public NoTrainForInputException(System.Type inputType, System.Collections.Generic.IReadOnlyList<string> scannedAssemblies) { }

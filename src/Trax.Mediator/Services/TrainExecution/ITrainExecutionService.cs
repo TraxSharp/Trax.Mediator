@@ -44,10 +44,12 @@ public interface ITrainExecutionService
     /// <param name="options">Priority, schedule, and the earlier run whose decisions the new run replays.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The created WorkQueue entry's ID and external ID.</returns>
-    /// <exception cref="NotSupportedException">
-    /// <see cref="QueueTrainOptions.ReplayDecisionsOf"/> is set and this implementation predates
-    /// replaying decisions. Refused rather than queued without it, because the run would then ask
-    /// its deciders afresh and could take a different track from the run it repeats.
+    /// <exception cref="Exceptions.DecisionReplayNotSupportedException">
+    /// <see cref="QueueTrainOptions.ReplayDecisionsOf"/> is set and this implementation does not
+    /// implement this overload, so it predates replaying decisions. The host is misconfigured
+    /// rather than the enqueue refused: the exception names the implementation, and the enqueue is
+    /// not made without the link, because the run would then ask its deciders afresh and could
+    /// take a different track from the run it repeats.
     /// </exception>
     /// <remarks>Throws whatever the other overload throws, for the same reasons.</remarks>
     Task<QueueTrainResult> QueueAsync(
@@ -58,9 +60,7 @@ public interface ITrainExecutionService
     ) =>
         options.ReplayDecisionsOf is null
             ? QueueAsync(trainName, inputJson, options.Priority, options.ScheduledAt, ct)
-            : throw new NotSupportedException(
-                $"{GetType().Name} cannot queue a run that replays an earlier run's decisions."
-            );
+            : throw new Exceptions.DecisionReplayNotSupportedException(GetType());
 
     /// <summary>
     /// Runs a train directly via ITrainBus on this machine.

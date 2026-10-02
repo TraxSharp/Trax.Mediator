@@ -8,6 +8,7 @@ using Trax.Effect.Data.Services.IDataContextFactory;
 using Trax.Effect.Models.Metadata;
 using Trax.Effect.Models.WorkQueue;
 using Trax.Effect.Services.ServiceTrain;
+using Trax.Mediator.Exceptions;
 using Trax.Mediator.Services.TrainExecution;
 using Trax.Mediator.Tests.Postgres.Integration.Fixtures;
 
@@ -56,7 +57,11 @@ public class QueueInputTests : TestSetup
         var act = async () =>
             await old.QueueAsync("Any", null, new QueueTrainOptions { ReplayDecisionsOf = 1 });
 
-        await act.Should().ThrowAsync<NotSupportedException>();
+        // A host misconfiguration, typed so the operations service can report it as one rather
+        // than as a refusal, and named so the operator knows which registration to fix.
+        var thrown = await act.Should().ThrowAsync<DecisionReplayNotSupportedException>();
+        thrown.Which.ImplementationType.Should().Be(typeof(PredatesReplay));
+        thrown.Which.Message.Should().Contain(typeof(PredatesReplay).FullName!);
     }
 
     /// <summary>An implementation written before the options overload existed.</summary>
