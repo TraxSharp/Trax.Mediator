@@ -1,6 +1,11 @@
 <Project>
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- Let a central PackageVersion apply to a package that also arrives
+         transitively, so one version wins across the graph. It does NOT mean a
+         PackageVersion can stand alone: one with no PackageReference anywhere is
+         invisible to Dependabot and freezes. See the Tests.Meta pin guard. -->
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <Import
     Project="$(MSBuildThisFileDirectory)trax-local.props"
@@ -16,7 +21,7 @@
     <PackageVersion Include="Trax.Effect.Provider.Json" Version="1.57.4" />
     <PackageVersion Include="Trax.Effect.Provider.Parameter" Version="1.57.4" />
     <PackageVersion Include="Trax.Effect.StateMachine.Persistence" Version="1.57.4" />
-    <PackageVersion Include="coverlet.collector" Version="10.0.1" />
+    <PackageVersion Include="coverlet.collector" Version="10.1.0" />
     <PackageVersion Include="DotNet.ReproducibleBuilds" Version="2.0.5" />
     <PackageVersion Include="FluentAssertions" Version="8.11.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
