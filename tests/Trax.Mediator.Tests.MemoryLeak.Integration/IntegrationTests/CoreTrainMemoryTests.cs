@@ -1,4 +1,4 @@
-using FluentAssertions;
+using AwesomeAssertions;
 using LanguageExt;
 using Trax.Core.Junction;
 using Trax.Core.Train;

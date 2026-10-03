@@ -1,6 +1,6 @@
 using System.Reflection;
 using System.Text.Json;
-using FluentAssertions;
+using AwesomeAssertions;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
